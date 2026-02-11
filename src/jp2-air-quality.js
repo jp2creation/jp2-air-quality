@@ -45,6 +45,7 @@ class Jp2AirQualityCard extends HTMLElement {
       graph_height: 20,
       line_width: 2,
       bar: {
+        align: "center",
         width: 92,
         height: 6,
         good: "#45d58e",
@@ -101,6 +102,11 @@ class Jp2AirQualityCard extends HTMLElement {
           name: "bar",
           title: "Barre (largeur / hauteur / couleurs)",
           schema: [
+            { name: "align", selector: { select: { options: [
+              { label: "Centré", value: "center" },
+              { label: "Gauche", value: "left" },
+              { label: "Droite", value: "right" },
+            ], mode: "dropdown" } } },
             { name: "width", selector: { number: { min: 10, max: 100, step: 1, mode: "box" } } },
             { name: "height", selector: { number: { min: 2, max: 20, step: 1, mode: "box" } } },
             { name: "good", selector: { text: {} } },
@@ -135,6 +141,7 @@ class Jp2AirQualityCard extends HTMLElement {
           hours_to_show: "Heures affichées",
           graph_height: "Hauteur graphe",
           line_width: "Épaisseur ligne",
+          align: "Alignement",
           width: "Largeur (%)",
           height: "Hauteur (px)",
           good: "Couleur vert",
@@ -152,6 +159,8 @@ class Jp2AirQualityCard extends HTMLElement {
 
       computeHelper: (schema) => {
         switch (schema.name) {
+          case "align":
+            return "Position de la barre : gauche / centré / droite (défaut centré).";
           case "width":
             return "Largeur de la barre en pourcentage de la carte (10–100).";
           case "height":
@@ -193,6 +202,7 @@ class Jp2AirQualityCard extends HTMLElement {
       // ✅ Barre : show/hide (YAML), largeur/hauteur/couleurs
       bar: {
         enabled: true,
+        align: "center",
         width: 92,
         height: 6,
         good: "#45d58e",
@@ -346,7 +356,9 @@ class Jp2AirQualityCard extends HTMLElement {
     const warn = (b.warn || "#ffb74d").replace(/"/g, '\\"');
     const bad = (b.bad || "#ff6363").replace(/"/g, '\\"');
 
-    return { enabled, width, height, good, warn, bad };
+    const align = (b.align || "center");
+    const alignNorm = (align === "left" || align === "right" || align === "center") ? align : "center";
+    return { enabled, width, height, good, warn, bad, align: alignNorm };
   }
 
   _barStyleAscending() {
@@ -359,13 +371,71 @@ class Jp2AirQualityCard extends HTMLElement {
     const warnPct = ((warnMax - min) / (max - min)) * 100;
 
     const bar = this._barStyleCommon();
-    const barBlock = bar.enabled
-      ? `
+    const barBlock = (() => {
+      if (!bar.enabled) {
+        return `ha-card:before{ content:none !important; }\nha-card:after{ content:none !important; }`;
+      }
+      if (bar.align === "left") {
+        return `
+ha-card:before{
+  content:"";
+  position:absolute;
+  left:16px;
+  width: var(--bar_w);
+  bottom:8px;
+  height: var(--bar_h);
+  border-radius:999px;
+  background: var(--track);
+}
+ha-card:after{
+  content:"";
+  position:absolute;
+  left: calc(16px + (var(--bar_w) * (var(--p) / 100)));
+  bottom: calc(8px + (var(--bar_h) - 10px)/2);
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  transform: translateX(-50%);
+  background: var(--fill);
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.85);
+  opacity: var(--thumb_opacity);
+  pointer-events: none;
+}`.trim();
+      }
+      if (bar.align === "right") {
+        return `
+ha-card:before{
+  content:"";
+  position:absolute;
+  right:16px;
+  width: var(--bar_w);
+  bottom:8px;
+  height: var(--bar_h);
+  border-radius:999px;
+  background: var(--track);
+}
+ha-card:after{
+  content:"";
+  position:absolute;
+  left: calc((100% - 16px - var(--bar_w)) + (var(--bar_w) * (var(--p) / 100)));
+  bottom: calc(8px + (var(--bar_h) - 10px)/2);
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  transform: translateX(-50%);
+  background: var(--fill);
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.85);
+  opacity: var(--thumb_opacity);
+  pointer-events: none;
+}`.trim();
+      }
+      // center (default)
+      return `
 ha-card:before{
   content:"";
   position:absolute;
   left: calc((100% - var(--bar_w)) / 2);
-  right: calc((100% - var(--bar_w)) / 2);
+  width: var(--bar_w);
   bottom:8px;
   height: var(--bar_h);
   border-radius:999px;
@@ -384,12 +454,8 @@ ha-card:after{
   box-shadow: 0 0 0 2px rgba(0,0,0,0.85);
   opacity: var(--thumb_opacity);
   pointer-events: none;
-}`
-      : `
-ha-card:before{ content:none !important; }
-ha-card:after{ content:none !important; }
-`;
-
+}`.trim();
+    })();
     return `
 ha-card{
   box-shadow:none;
@@ -504,14 +570,72 @@ ${barBlock}`.trim();
       fairMax = Number(p.fair_max);
     const off = Number(p.offset || 0);
 
-    const bar = this._barStyleCommon();
-    const barBlock = bar.enabled
-      ? `
+        const bar = this._barStyleCommon();
+    const barBlock = (() => {
+      if (!bar.enabled) {
+        return `ha-card:before{ content:none !important; }\nha-card:after{ content:none !important; }`;
+      }
+      if (bar.align === "left") {
+        return `
+ha-card:before{
+  content:"";
+  position:absolute;
+  left:16px;
+  width: var(--bar_w);
+  bottom:8px;
+  height: var(--bar_h);
+  border-radius:999px;
+  background: var(--track);
+}
+ha-card:after{
+  content:"";
+  position:absolute;
+  left: calc(16px + (var(--bar_w) * (var(--p) / 100)));
+  bottom: calc(8px + (var(--bar_h) - 10px)/2);
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  transform: translateX(-50%);
+  background: var(--fill);
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.85);
+  opacity: var(--thumb_opacity);
+  pointer-events: none;
+}`.trim();
+      }
+      if (bar.align === "right") {
+        return `
+ha-card:before{
+  content:"";
+  position:absolute;
+  right:16px;
+  width: var(--bar_w);
+  bottom:8px;
+  height: var(--bar_h);
+  border-radius:999px;
+  background: var(--track);
+}
+ha-card:after{
+  content:"";
+  position:absolute;
+  left: calc((100% - 16px - var(--bar_w)) + (var(--bar_w) * (var(--p) / 100)));
+  bottom: calc(8px + (var(--bar_h) - 10px)/2);
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  transform: translateX(-50%);
+  background: var(--fill);
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.85);
+  opacity: var(--thumb_opacity);
+  pointer-events: none;
+}`.trim();
+      }
+      // center (default)
+      return `
 ha-card:before{
   content:"";
   position:absolute;
   left: calc((100% - var(--bar_w)) / 2);
-  right: calc((100% - var(--bar_w)) / 2);
+  width: var(--bar_w);
   bottom:8px;
   height: var(--bar_h);
   border-radius:999px;
@@ -530,12 +654,8 @@ ha-card:after{
   box-shadow: 0 0 0 2px rgba(0,0,0,0.85);
   opacity: var(--thumb_opacity);
   pointer-events: none;
-}`
-      : `
-ha-card:before{ content:none !important; }
-ha-card:after{ content:none !important; }
-`;
-
+}`.trim();
+    })();
     return `
 ha-card{
   box-shadow:none;
