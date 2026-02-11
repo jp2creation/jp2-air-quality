@@ -87,6 +87,7 @@ class Jp2AirQualityCard extends HTMLElement {
             { name: "name", selector: { text: {} } },
             { name: "icon", selector: { icon: {} }, context: { icon_entity: "entity" } },
             { name: "show_graph", selector: { boolean: {} } },
+            { name: "bar_enabled", selector: { boolean: {} } },
           ],
         },
         {
