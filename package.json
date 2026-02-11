@@ -1,6 +1,6 @@
 {
   "name": "jp2-air-quality",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "description": "Air quality stack card (Mushroom + mini-graph) with threshold bar + Visual Editor",
   "private": true,
   "type": "module",

@@ -17,7 +17,16 @@ avec une **barre horizontale colorée (seuils) au-dessus du graphe**.
 ## Installation (HACS)
 - Ressource : `/hacsfiles/jp2-air-quality/jp2-air-quality.js` (module)
 
-## Options de la barre (uniquement largeur/hauteur/couleurs)
+## Options
+
+### Fond de carte coloré (optionnel)
+
+```yaml
+background_enabled: true
+```
+
+### Barre (largeur/hauteur/couleurs)
+
 
 ```yaml
 bar:
@@ -29,7 +38,13 @@ bar:
   bad:  "#ff6363"
 ```
 
-Masquer la barre (option YAML) :
+Masquer la barre :
+```yaml
+bar_enabled: false
+```
+
+(ou en YAML avancé :)
+
 ```yaml
 bar:
   enabled: false
