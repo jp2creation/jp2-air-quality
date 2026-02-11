@@ -1,0 +1,16 @@
+{
+  "name": "jp2-air-quality",
+  "version": "1.5.1",
+  "description": "Air quality stack card (Mushroom + mini-graph) with threshold bar + Visual Editor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c",
+    "watch": "rollup -c -w"
+  },
+  "devDependencies": {
+    "@rollup/plugin-replace": "^5.0.5",
+    "@rollup/plugin-terser": "^0.4.4",
+    "rollup": "^4.22.4"
+  }
+}
