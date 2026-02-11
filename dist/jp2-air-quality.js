@@ -3,6 +3,8 @@ const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC =
   "Mushroom + mini-graph stack with threshold bar and full visual editor.";
 
+const CARD_VERSION = "1.6.3";
+
 const DEFAULT_NAME_BY_PRESET = {
   radon: "Radon",
   pressure: "Pression",
@@ -32,6 +34,7 @@ class Jp2AirQualityCard extends HTMLElement {
     this._helpersPromise = null;
     this._top = null;
     this._graph = null;
+    this._container = null;
   }
 
   static getStubConfig() {
@@ -41,6 +44,8 @@ class Jp2AirQualityCard extends HTMLElement {
       name: DEFAULT_NAME_BY_PRESET.radon,
       icon: DEFAULT_ICON_BY_PRESET.radon,
       show_graph: true,
+      bar_enabled: true,
+      background_enabled: false,
       hours_to_show: 24,
       graph_height: 20,
       line_width: 2,
@@ -138,6 +143,8 @@ class Jp2AirQualityCard extends HTMLElement {
           name: "Nom",
           icon: "Icône",
           show_graph: "Afficher le graphe",
+          bar_enabled: "Afficher la barre",
+          background_enabled: "Fond coloré",
           hours_to_show: "Heures affichées",
           graph_height: "Hauteur graphe",
           line_width: "Épaisseur ligne",
@@ -169,6 +176,10 @@ class Jp2AirQualityCard extends HTMLElement {
           case "warn":
           case "bad":
             return "Couleur CSS : ex #45d58e, rgb(69,213,142), rgba(...).";
+          case "bar_enabled":
+            return "Active/désactive la barre colorée (seuils) au-dessus du graphe.";
+          case "background_enabled":
+            return "Colorise le fond de la carte selon la zone (vert/orange/rouge) de la valeur du capteur.";
           case "secondary":
             return "Si rempli, remplace le texte secondaire généré par le preset.";
           case "color":
@@ -194,6 +205,8 @@ class Jp2AirQualityCard extends HTMLElement {
       name: DEFAULT_NAME_BY_PRESET.radon,
       icon: DEFAULT_ICON_BY_PRESET.radon,
       show_graph: true,
+      bar_enabled: true,
+      background_enabled: false,
 
       // Global mapping overrides
       name_by_preset: {},
@@ -252,6 +265,11 @@ class Jp2AirQualityCard extends HTMLElement {
       graph: { ...(config.graph || {}) },
     };
 
+    // Backward/Editor mapping: bar_enabled -> bar.enabled
+    if (typeof this._config.bar_enabled === "boolean") {
+      this._config.bar = { ...(this._config.bar || {}), enabled: this._config.bar_enabled };
+    }
+
     // Default name/icon per preset if user didn't set them
     const nameMap = { ...DEFAULT_NAME_BY_PRESET, ...(this._config.name_by_preset || {}) };
     const iconMap = { ...DEFAULT_ICON_BY_PRESET, ...(this._config.icon_by_preset || {}) };
@@ -266,6 +284,7 @@ class Jp2AirQualityCard extends HTMLElement {
     this._hass = hass;
     if (this._top) this._top.hass = hass;
     if (this._graph) this._graph.hass = hass;
+    this._updateBackground();
   }
 
   getCardSize() {
@@ -277,6 +296,84 @@ class Jp2AirQualityCard extends HTMLElement {
     return this._helpersPromise;
   }
 
+
+  _parseColorToRgba(color, alpha = 0.12) {
+    if (!color) return "";
+    const c = String(color).trim();
+    // #RGB or #RRGGBB
+    if (c[0] === "#") {
+      const hex = c.slice(1);
+      const h = hex.length === 3
+        ? hex.split("").map((x) => x + x).join("")
+        : hex.length === 6 ? hex : null;
+      if (h) {
+        const r = parseInt(h.slice(0, 2), 16);
+        const g = parseInt(h.slice(2, 4), 16);
+        const b = parseInt(h.slice(4, 6), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      }
+      return "";
+    }
+    // rgb(...) -> rgba(...)
+    const rgb = c.match(/^rgb\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\)$/i);
+    if (rgb) return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})`;
+
+    // rgba(...) -> same but override alpha
+    const rgba = c.match(/^rgba\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\)$/i);
+    if (rgba) return `rgba(${rgba[1]}, ${rgba[2]}, ${rgba[3]}, ${alpha})`;
+
+    // unknown (named color etc.) fallback: try color-mix if supported by browser
+    // We'll just return empty to avoid weird results.
+    return "";
+  }
+
+  _getNumericState(entity) {
+    if (!this._hass || !entity) return null;
+    const st = this._hass.states?.[entity]?.state;
+    if (st === undefined || st === null) return null;
+    const v = parseFloat(st);
+    return Number.isFinite(v) ? v : null;
+  }
+
+  _getZoneForValue(v) {
+    if (v === null) return null;
+
+    if (this._isAscendingPreset()) {
+      const p = this._ascendingParams();
+      const sl = v + Number(p.offset || 0);
+      if (!Number.isFinite(sl)) return null;
+      if (sl <= Number(p.good_max)) return "good";
+      if (sl <= Number(p.warn_max)) return "warn";
+      return "bad";
+    }
+
+    const p = this._bandedParams();
+    const sl = v + Number(p.offset || 0);
+    if (!Number.isFinite(sl)) return null;
+    if (Number(p.good_min) <= sl && sl <= Number(p.good_max)) return "good";
+    if (Number(p.fair_min) <= sl && sl <= Number(p.fair_max)) return "warn";
+    return "bad";
+  }
+
+  _updateBackground() {
+    if (!this._container) return;
+    if (!this._config?.background_enabled) {
+      this._container.style.background = "";
+      return;
+    }
+    const v = this._getNumericState(this._config.entity);
+    const zone = this._getZoneForValue(v);
+    if (!zone) {
+      this._container.style.background = "";
+      return;
+    }
+
+    const b = this._config.bar || {};
+    const alpha = 0.12;
+    const src = zone === "good" ? b.good : zone === "warn" ? b.warn : b.bad;
+    const rgba = this._parseColorToRgba(src, alpha);
+    this._container.style.background = rgba || "";
+  }
   _isAscendingPreset() {
     return ["radon", "voc", "pm1", "pm25"].includes(this._config.preset);
   }
@@ -862,9 +959,11 @@ ha-card{
       stack.appendChild(this._graph);
     } else {
       this._graph = null;
+    this._container = null;
     }
 
     if (this._hass) this.hass = this._hass;
+    this._updateBackground();
   }
 }
 
@@ -875,10 +974,11 @@ window.customCards.push({
   type: CARD_TYPE,
   name: CARD_NAME,
   description: CARD_DESC,
+  version: CARD_VERSION,
 });
 
 console.info(
-  `%c ${CARD_NAME} %c v${"1.6.2"} `,
+  `%c ${CARD_NAME} %c v${CARD_VERSION} `,
   "color: white; background: #03a9f4; font-weight: 700;",
   "color: #03a9f4; background: white; font-weight: 700;"
 );
