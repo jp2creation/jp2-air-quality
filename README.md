@@ -1,131 +1,100 @@
-# JP2 Air Quality Card (Home Assistant)
+<div align="center">
+
+# JP2 Air Quality Card  
+### Lovelace “dashboard card” for Air Quality & Comfort (CO₂ / VOC / Radon / Temp / Humidity …)
+
 [![HACS Custom][hacs_shield]][hacs]
 ![Latest Stable Version](https://img.shields.io/packagist/v/jp2creation/jp2-air-quality?label=version)
 [![GitHub All Releases][downloads_total_shield]][releases]
 [![Buy me a coffee][buy_me_a_coffee_shield]][buy_me_a_coffee]
 
-[hacs_shield]: https://img.shields.io/static/v1.svg?label=HACS&message=Custom&style=popout&color=orange&labelColor=41bdf5&logo=HomeAssistantCommunityStore&logoColor=white
-[hacs]: https://hacs.xyz/docs/faq/custom_repositories
+<br/>
 
-[releases]: https://github.com/jp2creation/jp2-air-quality/releases/latest
-[downloads_total_shield]: https://img.shields.io/github/downloads/jp2creation/jp2-air-quality/total
+<img src="docs/images/preview.jpg" alt="JP2 Air Quality Card preview" width="900">
 
-[buy_me_a_coffee_shield]: https://img.shields.io/static/v1.svg?label=%20&message=Buy%20me%20a%20coffee&color=6f4e37&logo=buy%20me%20a%20coffee&logoColor=white
-[buy_me_a_coffee]: https://www.buymeacoffee.com/jp2creation
-
-Une carte Lovelace au style “dashboard” pour afficher **qualité de l’air** et **confort** (CO₂, COV/VOC, radon, pression, température, humidité…), avec une **jauge colorée** et un **indicateur**.
-
-> ✅ **Version 2.0.0 (V2)** : refonte totale côté **éditeur visuel** (UI plus fluide), code restructuré et stabilité renforcée (notamment lors de l’activation IQA / Graph).
-
-![Aperçu de la carte](docs/images/preview.jpg)
+</div>
 
 ---
 
-## Table des matières
+## 🚀 What is it?
 
-- [Points clés](#points-clés)
-- [Compatibilité](#compatibilité)
-- [Installation](#installation)
-  - [HACS (Custom repository)](#option-a--hacs-custom-repository)
-  - [Installation manuelle](#option-b--installation-manuelle)
-  - [Mise à jour](#mise-à-jour)
-- [Configuration](#configuration)
-  - [Exemple minimal](#exemple-minimal-yaml)
-  - [Exemple avancé](#exemple-avancé-iqa--graphe--options-visuelles)
-  - [Référence des options](#référence-des-options)
-- [Éditeur visuel V2.0.0](#éditeur-visuel-v200)
-- [Conseils d’utilisation](#conseils-dutilisation)
-- [Dépannage](#dépannage)
-- [FAQ](#faq)
-- [Développement](#développement)
-- [Contribuer](#contribuer)
-- [Changelog](#changelog)
-- [Licence](#licence)
+**JP2 Air Quality Card** is a Lovelace card with a clean **dashboard look** designed to display **air quality** and **comfort** at a glance:  
+CO₂, VOC/COV, radon, pressure, temperature, humidity…  
+It includes a **colored gauge**, a **status label**, an optional **IQA summary** and an integrated **history graph**.
+
+> ✅ **V2.0.0**: full visual editor redesign (smoother UI), improved stability, cleaner internal structure — especially when enabling **IQA** and/or **Graph**.
 
 ---
 
-## Points clés
+## ✨ Highlights
 
-- **Design dashboard** (parfait sur thèmes sombres / style Mushroom).
-- Affichage **multi-capteurs** (CO₂, COV/VOC, radon, pression, température, humidité…).
-- **Jauge** avec zones (vert/jaune/rouge) + **curseur** de position.
-- **Texte de statut** (ex. *Bon*, *À aérer*, *Confort*, *Variable*…).
-- **IQA (Indice Qualité d’Air)** : vue “résumé” avec entités (CO₂, COV/VOC, etc.) et statut global (*Bon / Moyen / Mauvais*).
-- Option IQA : **masquer la liste des capteurs**.
-- **Graphe interne** basé sur l’historique Home Assistant (remplace `mini-graph-card`).
-- Options d’UI :
-  - **redimensionner l’icône**
-  - **masquer le fond de l’icône**
-  - **masquer le cercle/anneau** autour de l’icône
-- Quand **IQA + Graphe** sont activés : la **barre de séparation** peut être automatiquement retirée (interface plus clean).
-
-> ℹ️ Certaines options peuvent varier selon ta version.  
-> Le plus fiable : ouvrir l’éditeur visuel de la carte pour voir la liste complète.
+- Dashboard design (great on dark themes / Mushroom-like styles)
+- Multi-sensors display (CO₂, VOC, radon, pressure, temperature, humidity…)
+- Color gauge (green/yellow/red) + cursor indicator
+- Status text (*Good*, *Ventilate*, *Comfort*, *Variable*…)
+- **IQA mode**: global Air Quality summary + per-entity rows
+- Option to **hide sensor list** in IQA mode
+- Built-in history graph (no need for `mini-graph-card`)
+- UI options:
+  - icon resize
+  - hide icon background
+  - hide icon ring/circle
+- When **IQA + Graph** are enabled: optional automatic removal of the divider bar for a cleaner layout
 
 ---
 
-## Compatibilité
+## 🧩 Quick links
 
-- Requis : un dashboard **Lovelace** sur **Home Assistant**.
-- Capteurs recommandés : `sensor.*` avec états **numériques** (particulièrement pour le graphe).
-- Historique : si tu veux le graphe, assure-toi que l’entité est bien enregistrée par **Recorder** (ou une solution d’historique équivalente).
+- 📦 Latest release: [Releases][releases]
+- 🛠️ HACS custom repositories doc: [HACS Custom Repo][hacs]
+- ☕ Support: [Buy me a coffee][buy_me_a_coffee]
 
 ---
 
-## Installation
+## ✅ Requirements
+
+- Home Assistant with Lovelace dashboards
+- Access to `/config/www/` for manual install (optional)
+- Sensors with **numeric states** (required for graph)
+
+---
+
+## 📦 Installation
 
 ### Option A — HACS (Custom repository)
 
-1. Ouvre **HACS** → **Frontend**
+1. HACS → **Frontend**
 2. Menu (⋮) → **Custom repositories**
-3. Ajoute :
-   - **Repository :** `jp2creation/jp2-air-quality`
-   - **Category :** `Lovelace`
-4. Installe la carte
-5. Recharge le navigateur (ou vide le cache)
+3. Add:
+   - Repository: `jp2creation/jp2-air-quality`
+   - Category: `Lovelace`
+4. Install the card
+5. Refresh browser cache
 
-**Ressource Lovelace (si nécessaire)**
-- Paramètres → Tableaux de bord → Ressources → Ajouter
-- URL : `/hacsfiles/jp2-air-quality/jp2-air-quality.js`
-- Type : `Module`
+If the resource isn’t added automatically:
+- Settings → Dashboards → Resources → Add
+- URL: `/hacsfiles/jp2-air-quality/jp2-air-quality.js`
+- Type: `Module`
 
-### Option B — Installation manuelle
+### Option B — Manual
 
-1. Copier le fichier **`jp2-air-quality.js`** dans :
-   - `/config/www/` (ce qui correspond à `/local/` dans Lovelace)
+1. Copy **`jp2-air-quality.js`** to:
+   - `/config/www/`  (Lovelace path is `/local/`)
+2. Add Lovelace resource:
+   - Settings → Dashboards → Resources → Add
+   - URL: `/local/jp2-air-quality.js`
+   - Type: `Module`
+3. Hard refresh the browser
 
-2. Ajouter la ressource Lovelace :
-   - Paramètres → Tableaux de bord → Ressources → Ajouter
-   - **URL :** `/local/jp2-air-quality.js`
-   - **Type :** `Module`
-
-3. Recharger le navigateur (ou vider le cache).
-
-> ⚠️ Important : le fichier principal doit rester nommé exactement **`jp2-air-quality.js`**.
+> ⚠️ Important: the main file must stay named exactly **`jp2-air-quality.js`**.
 
 ---
 
-## Mise à jour
-
-### Via HACS
-- HACS → Frontend → `JP2 Air Quality Card` → Update
-
-### Manuelle
-- Remplacer `jp2-air-quality.js` dans `/config/www/`
-- Vider le cache du navigateur (ou redémarrer l’app HA sur mobile)
-
-**Astuce cache-buster**
-- `/local/jp2-air-quality.js?v=2`
-
----
-
-## Configuration
-
-### Exemple minimal (YAML)
+## ⚡ Quick start
 
 ```yaml
 type: custom:jp2-air-quality
-title: Qualité de l’air
+title: Air quality
 entities:
   radon: sensor.radon_bq_m3
   co2: sensor.co2_ppm
@@ -133,4 +102,203 @@ entities:
   pressure: sensor.pressure_hpa
   temperature: sensor.temperature_salon
   humidity: sensor.humidity_salon
+```
 
+---
+
+## ⚙️ Configuration
+
+### Advanced example (IQA + Graph + UI options)
+
+```yaml
+type: custom:jp2-air-quality
+title: Salon
+
+# Graph
+show_graph: true
+graph_hours: 24
+
+# Icon style
+icon:
+  size: 44
+  show_background: false
+  show_circle: false
+
+# IQA (Air Quality Index summary)
+iqa:
+  enabled: true
+  hide_sensors: true
+  sensors:
+    - entity: sensor.co2_ppm
+      label: CO2
+      unit: ppm
+      good: 800
+      medium: 1200
+    - entity: sensor.voc_ppb
+      label: VOC
+      unit: ppb
+      good: 150
+      medium: 300
+```
+
+---
+
+## 📚 Options reference
+
+If an option is not available in your version, it is simply ignored.
+
+### General
+
+| Option      | Type   | Default | Description |
+|------------|--------|---------|-------------|
+| `title`    | string | —       | Card title |
+| `entities` | object | —       | Sensors mapping (`co2`, `voc`, `radon`, `pressure`, `temperature`, `humidity`…) |
+
+### Graph
+
+| Option         | Type    | Default | Description |
+|---------------|---------|---------|-------------|
+| `show_graph`  | boolean | false   | Enables built-in history graph |
+| `graph_hours` | number  | 24      | History window (hours) |
+
+### Icon
+
+| Option                 | Type    | Default | Description |
+|------------------------|---------|---------|-------------|
+| `icon.size`            | number  | 44      | Icon size (px) |
+| `icon.show_background` | boolean | true    | Show/hide icon background |
+| `icon.show_circle`     | boolean | true    | Show/hide icon ring |
+
+### IQA
+
+| Option              | Type    | Default | Description |
+|--------------------|---------|---------|-------------|
+| `iqa.enabled`      | boolean | false   | Enables IQA summary mode |
+| `iqa.hide_sensors` | boolean | false   | Hides the sensor list in IQA mode |
+| `iqa.sensors`      | array   | `[]`    | IQA sensors list with thresholds |
+
+#### `iqa.sensors[]` item
+
+| Field    | Type   | Required | Description |
+|----------|--------|----------|-------------|
+| `entity` | string | ✅       | HA entity (ex: `sensor.co2_ppm`) |
+| `label`  | string | ✅       | Display name |
+| `unit`   | string | ❌       | Display unit (ppm/ppb/…) |
+| `good`   | number | ✅       | “Good” threshold |
+| `medium` | number | ✅       | “Medium” threshold (above = “Bad”) |
+
+---
+
+## 🧠 Visual editor (V2.0.0)
+
+V2.0.0 includes a full redesign of the visual editor:
+- smoother UI / fewer freezes
+- clearer settings sections
+- more stable behavior when enabling IQA and/or Graph
+- cleaner internal code structure for easier maintenance
+
+---
+
+## ✅ Best practices
+
+- CO₂ high → ventilate/open windows
+- VOC → check sources (paints, solvents, sprays), ventilate
+- Radon → evaluate over time (average), take action if persistent
+
+---
+
+## 🧯 Troubleshooting
+
+### Card not showing / “Custom element doesn’t exist”
+- Check the resource path (`/local/...` or `/hacsfiles/...`)
+- Ensure the resource type is **Module**
+- Hard refresh the browser
+
+### Old version still loaded
+- Clear browser cache  
+- Or use a cache buster:  
+  `/local/jp2-air-quality.js?v=2`
+
+### Graph is empty
+- The entity must have history (Recorder enabled)
+- The entity state must be numeric
+
+### Freeze when enabling IQA
+- Update to **2.0.0+** (visual editor + stability improvements)
+
+---
+
+## ❓ FAQ
+
+<details>
+  <summary><b>Can I use the card with only CO₂ and temperature?</b></summary>
+
+Yes. You can provide only the sensors you have; the card adapts.
+</details>
+
+<details>
+  <summary><b>Can I create one card per room?</b></summary>
+
+Yes. Duplicate the YAML and change the title + entities.
+</details>
+
+<details>
+  <summary><b>Does the built-in graph replace mini-graph-card?</b></summary>
+
+Yes. This card includes its own graph based on Home Assistant history.
+</details>
+
+---
+
+## 🛠️ Development
+
+Copy `jp2-air-quality.js` into `/config/www/`  
+Add resource: `/local/jp2-air-quality.js?v=dev`  
+Hard refresh browser after each change
+
+Tip: keeping `?v=dev` helps bypass cache when iterating quickly.
+
+---
+
+## 🤝 Contributing
+
+Please open an Issue with:
+- Home Assistant version
+- YAML config (remove sensitive info)
+- Console logs (F12) if any
+
+PR workflow:
+1. Fork
+2. Create a branch: `feature/my-feature`
+3. Clean commits
+4. Pull Request
+
+---
+
+## 🧾 Changelog
+
+See the GitHub releases page: [Releases][releases]
+
+---
+
+## 📄 License
+
+MIT — see `LICENSE`.
+
+---
+
+## ☕ Support
+
+If this project helps you, you can support it here: [Buy me a coffee][buy_me_a_coffee]
+
+---
+
+<!-- Badges / links -->
+
+[hacs_shield]: https://img.shields.io/badge/HACS-Custom-orange.svg
+[downloads_total_shield]: https://img.shields.io/github/downloads/jp2creation/jp2-air-quality/total
+[buy_me_a_coffee_shield]: https://img.shields.io/badge/Buy%20me%20a%20coffee-Support-yellow.svg
+
+[hacs]: https://hacs.xyz/docs/faq/custom_repositories/
+[releases]: https://github.com/jp2creation/jp2-air-quality/releases
+[buy_me_a_coffee]: https://www.buymeacoffee.com/jp2creation
