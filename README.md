@@ -8,13 +8,13 @@
 [hacs_shield]: https://img.shields.io/static/v1.svg?label=HACS&message=Custom&style=popout&color=orange&labelColor=41bdf5&logo=HomeAssistantCommunityStore&logoColor=white
 [hacs]: https://hacs.xyz/docs/faq/custom_repositories
 
-[latest_release]: https://github.com/ThierryBourbon/Home-Assistant-Samsung-Soundbar/releases/latest
+[latest_release]: https://github.com/jp2creation/jp2-air-quality/releases/latest
 [releases_shield]:https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fjp2creation%2Fjp2-air-quality%2Fmaster%2Fcustom_components%2Fsamsung_soundbar%2Fmanifest.json&query=%24.version&label=release
 
 
 
-[releases]: https://github.com/ThierryBourbon/Home-Assistant-custom-components-samsung-Soundbar/releases/latest
-[downloads_total_shield]: https://img.shields.io/github/downloads/jp2creation/p2-air-quality/total
+[releases]: https://github.com/jp2creation/p2-air-quality/releases/latest
+[downloads_total_shield]: https://img.shields.io/github/downloads/jp2creation/jp2-air-quality/total
 
 
 [buy_me_a_coffee_shield]: https://img.shields.io/static/v1.svg?label=%20&message=Buy%20me%20a%20coffee&color=6f4e37&logo=buy%20me%20a%20coffee&logoColor=white
