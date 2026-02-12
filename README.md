@@ -1,6 +1,6 @@
 # JP2 Air Quality Card (Home Assistant)
 [![HACS Custom][hacs_shield]][hacs]
-[![Latest Stable Version](https://img.shields.io/packagist/v/jp2creation/jp2-air-quality?label=version)](https://packagist.org/packages/jp2creation/jp2-air-quality)
+![Latest Stable Version](https://img.shields.io/packagist/v/jp2creation/jp2-air-quality?label=version)
 [![GitHub All Releases][downloads_total_shield]][releases]
 [![Buy me a coffee][buy_me_a_coffee_shield]][buy_me_a_coffee]
 
