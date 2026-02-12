@@ -1,7 +1,7 @@
 <div align="center">
 
 # JP2 Air Quality Card  
-### Lovelace “dashboard card” for Air Quality & Comfort (CO₂ / VOC / Radon / Temp / Humidity …)
+### Lovelace “dashboard card” for Air Quality & Comfort (CO₂ / VOC / Radon / Temp / …)
 
 [![HACS Custom][hacs_shield]][hacs]
 ![Latest Stable Version](https://img.shields.io/packagist/v/jp2creation/jp2-air-quality?label=version)
