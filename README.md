@@ -16,9 +16,9 @@
 
 **JP2 Air Quality Card** is a Lovelace card with a clean **dashboard look** designed to display **air quality** and **comfort** at a glance:  
 CO₂, VOC/COV, radon, pressure, temperature, humidity…  
-It includes a **colored gauge**, a **status label**, an optional **IQA summary** and an integrated **history graph**.
+It includes a **colored gauge**, a **status label**, an optional **AQI summary** and an integrated **history graph**.
 
-> ✅ **V2.0.0**: full visual editor redesign (smoother UI), improved stability, cleaner internal structure — especially when enabling **IQA** and/or **Graph**.
+> ✅ **V2.0.0**: full visual editor redesign (smoother UI), improved stability, cleaner internal structure — especially when enabling **AQI** and/or **Graph**.
 
 ---
 
@@ -28,14 +28,14 @@ It includes a **colored gauge**, a **status label**, an optional **IQA summary**
 - Multi-sensors display (CO₂, VOC, radon, pressure, temperature, humidity…)
 - Color gauge (green/yellow/red) + cursor indicator
 - Status text (*Good*, *Ventilate*, *Comfort*, *Variable*…)
-- **IQA mode**: global Air Quality summary + per-entity rows
-- Option to **hide sensor list** in IQA mode
+- **AQI mode**: global Air Quality summary + per-entity rows
+- Option to **hide sensor list** in AQI mode
 - Built-in history graph (no need for `mini-graph-card`)
 - UI options:
   - icon resize
   - hide icon background
   - hide icon ring/circle
-- When **IQA + Graph** are enabled: optional automatic removal of the divider bar for a cleaner layout
+- When **AQI + Graph** are enabled: optional automatic removal of the divider bar for a cleaner layout
 
 ---
 
@@ -104,7 +104,7 @@ entities:
 
 ## ⚙️ Configuration
 
-### Advanced example (IQA + Graph + UI options)
+### Advanced example (AQI + Graph + UI options)
 
 ```yaml
 type: custom:jp2-air-quality
@@ -120,8 +120,8 @@ icon:
   show_background: false
   show_circle: false
 
-# IQA (Air Quality Index summary)
-iqa:
+# AQI (Air Quality Index summary)
+aqi:
   enabled: true
   hide_sensors: true
   sensors:
@@ -136,6 +136,8 @@ iqa:
       good: 150
       medium: 300
 ```
+
+> ℹ️ Note: if you previously used the `iqa:` key, update it to `aqi:`.
 
 ---
 
@@ -165,15 +167,15 @@ If an option is not available in your version, it is simply ignored.
 | `icon.show_background` | boolean | true    | Show/hide icon background |
 | `icon.show_circle`     | boolean | true    | Show/hide icon ring |
 
-### IQA
+### AQI
 
 | Option              | Type    | Default | Description |
 |--------------------|---------|---------|-------------|
-| `iqa.enabled`      | boolean | false   | Enables IQA summary mode |
-| `iqa.hide_sensors` | boolean | false   | Hides the sensor list in IQA mode |
-| `iqa.sensors`      | array   | `[]`    | IQA sensors list with thresholds |
+| `aqi.enabled`      | boolean | false   | Enables AQI summary mode |
+| `aqi.hide_sensors` | boolean | false   | Hides the sensor list in AQI mode |
+| `aqi.sensors`      | array   | `[]`    | AQI sensors list with thresholds |
 
-#### `iqa.sensors[]` item
+#### `aqi.sensors[]` item
 
 | Field    | Type   | Required | Description |
 |----------|--------|----------|-------------|
@@ -190,7 +192,7 @@ If an option is not available in your version, it is simply ignored.
 V2.0.0 includes a full redesign of the visual editor:
 - smoother UI / fewer freezes
 - clearer settings sections
-- more stable behavior when enabling IQA and/or Graph
+- more stable behavior when enabling AQI and/or Graph
 - cleaner internal code structure for easier maintenance
 
 ---
@@ -219,7 +221,7 @@ V2.0.0 includes a full redesign of the visual editor:
 - The entity must have history (Recorder enabled)
 - The entity state must be numeric
 
-### Freeze when enabling IQA
+### Freeze when enabling AQI
 - Update to **2.0.0+** (visual editor + stability improvements)
 
 ---
@@ -289,12 +291,10 @@ If this project helps you, you can support it here: [Buy me a coffee][buy_me_a_c
 
 ---
 
-<!-- Badges / links -->
-
-[hacs_shield]: https://img.shields.io/badge/HACS-Custom-blue.svg
-[downloads_total_shield]: https://img.shields.io/github/downloads/jp2creation/jp2-air-quality/total
-[buy_me_a_coffee_shield]: https://img.shields.io/badge/Buy%20me%20a%20coffee-Support-orange.svg
-
+<!-- Reference links (edit if needed) -->
+[hacs_shield]: https://img.shields.io/badge/HACS-Custom-orange.svg
 [hacs]: https://hacs.xyz/docs/faq/custom_repositories/
+[downloads_total_shield]: https://img.shields.io/github/downloads/jp2creation/jp2-air-quality/total
 [releases]: https://github.com/jp2creation/jp2-air-quality/releases
+[buy_me_a_coffee_shield]: https://img.shields.io/badge/Buy%20me%20a%20coffee-support-yellow.svg
 [buy_me_a_coffee]: https://www.buymeacoffee.com/jp2creation
