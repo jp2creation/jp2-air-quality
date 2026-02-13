@@ -186,7 +186,7 @@ If an option is not available in your version, it is simply ignored.
 ---
 
 ## 🧠 Visual editor (V2.0.0)
-<img src="docs/images/editor.png" alt="JP2 Air Quality Card preview" width="100%"><br>
+<img src="docs/images/visual-editor.png" alt="JP2 Air Quality Card preview" width="100%"><br>
 V2.0.0 includes a full redesign of the visual editor:
 - smoother UI / fewer freezes
 - clearer settings sections
