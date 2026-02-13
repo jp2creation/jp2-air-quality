@@ -1,5 +1,5 @@
 <div align="center">
-<img src="docs/images/jp2-air-quality.png" alt="JP2 Air Quality Card preview" width="100%"><br>
+<img src="docs/images/preview.png" alt="JP2 Air Quality Card preview" width="100%"><br>
 
 
 [![HACS Custom][hacs_shield]][hacs]
