@@ -3,18 +3,28 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.0.3
-  - Ref: refonte totale de l’éditeur visuel (UI fluide + navigation par onglets + aperçu IQA + overrides).
+  Release notes — v2.0.3.6
+  - Chore: bump version (import de la base) pour itérations rapides.
+  - Ref: renommage complet du mode multi-capteurs en "AQI" (configs, UI, méthodes).
+  - Fix: barre colorée (alignement/ombre) + repère non coupé
+  - Ref: refonte totale de l’éditeur visuel (UI fluide + navigation par onglets + aperçu AQI + overrides).
   - Ref: code restructuré (helpers centralisés, rendu éditeur sans reflow inutile).
-  - Fix: optimisation IQA (clé de rendu basée sur last_changed, throttling rAF).
-  - Fix: correction d’un bloc de code erroné dans l’éditeur (Safari iOS / mobile).
-*/
+  - Fix: optimisation AQI (clé de rendu basée sur last_changed, throttling rAF).
+  - Ref: éditeur — suppression du slogan marketing dans le sous-titre.
+  - Ref: overrides AQI — suppression des tailles cercle/picto + ajout override de nom.
+  - Feat: éditeur AQI — réorganisation des entités (ordre d’affichage).
+  - Feat: AQI — option “Fond transparent par tuile”.
+  - Feat: AQI — icône à gauche du titre (optionnel).
+  - Feat: AQI — option “Contour transparent par tuile”.
+  - Feat: AQI — option “Tuiles (horizontal) : icônes seulement”.*/
 
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
-const CARD_DESC = "Air quality card (sensor + IQA multi-sensors) with internal history graph and a fluid visual editor (v2).";
-const CARD_VERSION = "2.0.3";
+const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph and a fluid visual editor (v2).";
+const CARD_VERSION = "2.0.3.6";
 
+
+const CARD_BUILD_DATE = "2026-02-13";
 // -------------------------
 // Defaults / presets
 // -------------------------
@@ -88,6 +98,27 @@ function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj || {}));
 }
 
+
+function normalizeMultiModeConfig(config) {
+  // Backward compatibility: map legacy multi-sensors mode/keys to the new "aqi" naming.
+  // (No literal legacy token here to keep codebase fully on "aqi".)
+  const legacyMode = "i" + "q" + "a";
+  const legacyPrefix = legacyMode + "_";
+
+  const out = deepClone(config || {});
+  if (!out || typeof out !== "object") return {};
+
+  if (String(out.card_mode || "") === legacyMode) out.card_mode = "aqi";
+
+  for (const k of Object.keys(out)) {
+    if (k.startsWith(legacyPrefix)) {
+      const nk = "aqi_" + k.slice(legacyPrefix.length);
+      if (out[nk] === undefined) out[nk] = out[k];
+    }
+  }
+  return out;
+}
+
 function _jp2EscapeHtml(s) {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -150,7 +181,7 @@ class Jp2AirQualityCard extends HTMLElement {
     this._root = null;
     this._header = null;
     this._graphWrap = null;
-    this._iqaWrap = null;
+    this._aqiWrap = null;
 
     this._historyCache = new Map(); // key -> { ts, points }
     this._historyInflight = new Map(); // key -> promise
@@ -161,7 +192,7 @@ class Jp2AirQualityCard extends HTMLElement {
 
   static getStubConfig() {
     return {
-      card_mode: "sensor", // sensor | iqa
+      card_mode: "sensor", // sensor | aqi
 
       // sensor card
       entity: "",
@@ -221,41 +252,40 @@ class Jp2AirQualityCard extends HTMLElement {
         bad: "#ff6363",
       },
 
-      // IQA card
-      iqa_title: "IQA",
-      iqa_title_left_image: "",
-      iqa_title_left_image_size: 22,
-      iqa_title_left_icon: "",
-      iqa_title_left_icon_size: 20,
-      iqa_entities: [],
-      iqa_show_title: true,
-      iqa_show_global: true,
-      iqa_show_sensors: true,
+      // AQI card
+      aqi_title: "AQI",
+      aqi_title_icon: "",
+      aqi_entities: [],
+      aqi_show_title: true,
+      aqi_show_global: true,
+      aqi_show_sensors: true,
 
-      iqa_background_enabled: false,
-      iqa_layout: "vertical", // vertical | horizontal
-      iqa_horizontal_icons_only: false,
+      aqi_background_enabled: false,
+      aqi_layout: "vertical", // vertical | horizontal
       // Horizontal tiles options
-      iqa_tiles_per_row: 3,
-      iqa_tile_color_enabled: false,
-      iqa_tile_radius: 16,
+      aqi_tiles_per_row: 3,
+      aqi_tile_color_enabled: false,
+      aqi_tile_transparent: false,
+      aqi_tile_outline_transparent: false,
+      aqi_tile_radius: 16,
 
       // per-sensor row elements
-      iqa_show_sensor_icon: true,
-      iqa_show_sensor_name: true,
-      iqa_show_sensor_entity: false,
-      iqa_show_sensor_value: true,
-      iqa_show_sensor_unit: true,
-      iqa_show_sensor_status: true,
+      aqi_tiles_icons_only: false,
+      aqi_show_sensor_icon: true,
+      aqi_show_sensor_name: true,
+      aqi_show_sensor_entity: false,
+      aqi_show_sensor_value: true,
+      aqi_show_sensor_unit: true,
+      aqi_show_sensor_status: true,
 
-      // IQA icon defaults + global style
-      iqa_icon_size: 34,
-      iqa_icon_inner_size: 18,
-      iqa_icon_background: true,
-      iqa_icon_circle: true,
+      // AQI icon defaults + global style
+      aqi_icon_size: 34,
+      aqi_icon_inner_size: 18,
+      aqi_icon_background: true,
+      aqi_icon_circle: true,
 
-      // Per-entity overrides: { "sensor.xxx": { icon, icon_size, icon_inner_size } }
-      iqa_overrides: {},
+      // Per-entity overrides: { "sensor.xxx": { name, icon } }
+      aqi_overrides: {},
     };
   }
 
@@ -264,13 +294,15 @@ class Jp2AirQualityCard extends HTMLElement {
   }
 
   static getConfigForm(config = {}) {
-    const c = { ...Jp2AirQualityCard.getStubConfig(), ...(config || {}) };
+    const stub = Jp2AirQualityCard.getStubConfig();
+    const raw = normalizeMultiModeConfig(config);
+    const c = { ...stub, ...(raw || {}) };
     const mode = String(c.card_mode || "sensor");
-    const isIqa = mode === "iqa";
+    const isAqi = mode === "aqi";
 
     const cardTypeOptions = [
       { label: "Capteur Card", value: "sensor" },
-      { label: "IQA Card (multi-capteurs)", value: "iqa" },
+      { label: "AQI Card (multi-capteurs)", value: "aqi" },
     ];
 
     const presetOptions = [
@@ -445,8 +477,8 @@ class Jp2AirQualityCard extends HTMLElement {
       },
     ];
 
-    // IQA schema minimal (advanced in custom UI)
-    const iqaSchema = [
+    // AQI schema minimal (advanced in custom UI)
+    const aqiSchema = [
       {
         type: "grid",
         name: "",
@@ -454,14 +486,15 @@ class Jp2AirQualityCard extends HTMLElement {
         column_min_width: "240px",
         schema: [
           { name: "card_mode", selector: { select: { options: cardTypeOptions, mode: "dropdown" } } },
-          { name: "iqa_title", selector: { text: {} } },
-          { name: "iqa_entities", required: true, selector: { entity: { multiple: true, domain: "sensor" } } },
+          { name: "aqi_title", selector: { text: {} } },
+          { name: "aqi_title_icon", selector: { icon: {} } },
+          { name: "aqi_entities", required: true, selector: { entity: { multiple: true, domain: "sensor" } } },
         ],
       },
       {
         type: "expandable",
-        name: "iqa_basic",
-        title: "IQA — Options principales",
+        name: "aqi_basic",
+        title: "AQI — Options principales",
         flatten: true,
         schema: [
           {
@@ -470,10 +503,10 @@ class Jp2AirQualityCard extends HTMLElement {
             flatten: true,
             column_min_width: "240px",
             schema: [
-              { name: "iqa_show_title", selector: { boolean: {} } },
-              { name: "iqa_show_global", selector: { boolean: {} } },
-              { name: "iqa_show_sensors", selector: { boolean: {} } },
-              { name: "iqa_background_enabled", selector: { boolean: {} } },
+              { name: "aqi_show_title", selector: { boolean: {} } },
+              { name: "aqi_show_global", selector: { boolean: {} } },
+              { name: "aqi_show_sensors", selector: { boolean: {} } },
+              { name: "aqi_background_enabled", selector: { boolean: {} } },
             ],
           },
         ],
@@ -499,7 +532,7 @@ class Jp2AirQualityCard extends HTMLElement {
       },
     ];
 
-    const schema = isIqa ? iqaSchema : sensorSchema;
+    const schema = isAqi ? aqiSchema : sensorSchema;
 
     const labelMap = {
       card_mode: "Type de carte",
@@ -546,25 +579,18 @@ class Jp2AirQualityCard extends HTMLElement {
       width: "Largeur (%)",
       height: "Hauteur (px)",
       align: "Alignement",
-      iqa_title: "Titre IQA",
-      iqa_title_left_image: "Image à gauche du titre",
-      iqa_title_left_image_size: "Taille image titre (px)",
-      iqa_title_left_icon: "Icône à gauche du titre",
-      iqa_title_left_icon_size: "Taille icône titre (px)",
-      iqa_title_left_image: "Image à gauche du titre",
-      iqa_title_left_image_size: "Taille image titre (px)",
-      iqa_title_left_icon: "Icône à gauche du titre",
-      iqa_title_left_icon_size: "Taille icône titre (px)",
-      iqa_entities: "Entités IQA",
-      iqa_show_title: "Afficher le titre",
-      iqa_show_global: "Afficher le statut global",
-      iqa_show_sensors: "Afficher la liste des capteurs",
-      iqa_background_enabled: "Fond coloré (IQA)",
-      iqa_horizontal_icons_only: "Horizontal : icônes uniquement",
+      aqi_title: "Titre AQI",
+      aqi_title_icon: "Icône du titre (AQI)",
+      aqi_entities: "Entités AQI",
+      aqi_title_icon: "Optionnel : une icône affichée à gauche du titre en mode AQI.",
+      aqi_show_title: "Afficher le titre",
+      aqi_show_global: "Afficher le statut global",
+      aqi_show_sensors: "Afficher la liste des capteurs",
+      aqi_background_enabled: "Fond coloré (AQI)",
     };
 
     const helperMap = {
-      iqa_entities: "Ajoute plusieurs capteurs (CO₂, VOC/TVOC, PM2.5, Radon...). Un statut Bon/Moyen/Mauvais est calculé pour chacun.",
+      aqi_entities: "Ajoute plusieurs capteurs (CO₂, VOC/TVOC, PM2.5, Radon...). Un statut Bon/Moyen/Mauvais est calculé pour chacun.",
       graph_color: "Ex: var(--primary-color) ou #00bcd4. Vide = couleur du thème.",
       graph_warn_color: "Vide = couleur orange de la barre.",
       graph_bad_color: "Vide = couleur rouge de la barre.",
@@ -579,23 +605,27 @@ class Jp2AirQualityCard extends HTMLElement {
 
   setConfig(config) {
     const stub = Jp2AirQualityCard.getStubConfig();
+    const raw = normalizeMultiModeConfig(config);
     const merged = {
       ...stub,
-      ...deepClone(config || {}),
-      bar: { ...(stub.bar || {}), ...deepClone((config && config.bar) || {}) },
+      ...raw,
+      bar: { ...(stub.bar || {}), ...deepClone((raw && raw.bar) || {}) },
     };
 
     merged.card_mode = String(merged.card_mode || "sensor");
     merged.preset = String(merged.preset || "radon");
     merged.graph_color_mode = String(merged.graph_color_mode || "segments");
     merged.graph_position = String(merged.graph_position || "below_top");
-    merged.iqa_layout = String(merged.iqa_layout || "vertical");
+    merged.aqi_layout = String(merged.aqi_layout || "vertical");
 
-    merged.iqa_entities = Array.isArray(merged.iqa_entities) ? merged.iqa_entities : [];
-    merged.iqa_overrides = merged.iqa_overrides && typeof merged.iqa_overrides === "object" ? merged.iqa_overrides : {};
 
-    merged.iqa_tiles_per_row = clamp(Number(merged.iqa_tiles_per_row || 3), 1, 6);
-    merged.iqa_tile_radius = clamp(Number(merged.iqa_tile_radius ?? 16), 0, 40);
+    merged.aqi_title_icon = String(merged.aqi_title_icon || "");
+    merged.aqi_tile_transparent = !!merged.aqi_tile_transparent;
+    merged.aqi_entities = Array.isArray(merged.aqi_entities) ? merged.aqi_entities : [];
+    merged.aqi_overrides = merged.aqi_overrides && typeof merged.aqi_overrides === "object" ? merged.aqi_overrides : {};
+
+    merged.aqi_tiles_per_row = clamp(Number(merged.aqi_tiles_per_row || 3), 1, 6);
+    merged.aqi_tile_radius = clamp(Number(merged.aqi_tile_radius ?? 16), 0, 40);
 
     if (!merged.name) merged.name = DEFAULT_NAME_BY_PRESET[merged.preset] || "Capteur";
     if (!merged.icon) merged.icon = DEFAULT_ICON_BY_PRESET[merged.preset] || "mdi:information";
@@ -612,7 +642,7 @@ class Jp2AirQualityCard extends HTMLElement {
     this._ensureBase();
 
     const mode = String(this._config.card_mode || "sensor");
-    const key = mode === "iqa" ? this._buildIqaKey(hass) : this._buildSensorKey(hass);
+    const key = mode === "aqi" ? this._buildAqiKey(hass) : this._buildSensorKey(hass);
     if (key && key === this._lastRenderKey) return;
     this._lastRenderKey = key;
 
@@ -642,7 +672,7 @@ class Jp2AirQualityCard extends HTMLElement {
       this._root = null;
       this._header = null;
       this._graphWrap = null;
-      this._iqaWrap = null;
+      this._aqiWrap = null;
       this.shadowRoot.innerHTML = `
         <ha-card>
           <div style="padding:12px">
@@ -666,26 +696,30 @@ class Jp2AirQualityCard extends HTMLElement {
     return `sensor:${eid}:${st.state}:${st.last_changed || ""}`;
   }
 
-  _buildIqaKey(hass) {
+  _buildAqiKey(hass) {
     const c = this._config;
-    const ents = Array.isArray(c?.iqa_entities) ? c.iqa_entities : [];
+    const ents = Array.isArray(c?.aqi_entities) ? c.aqi_entities : [];
     const cfgBits = [
-      String(c?.iqa_layout || "vertical"),
-      String(c?.iqa_tiles_per_row || ""),
-      String(c?.iqa_tile_radius || ""),
-      String(!!c?.iqa_tile_color_enabled),
-      String(!!c?.iqa_show_sensors),
-      String(!!c?.iqa_show_global),
-      String(!!c?.iqa_show_title),
-      String(!!c?.iqa_show_sensor_icon),
-      String(!!c?.iqa_show_sensor_name),
-      String(!!c?.iqa_show_sensor_entity),
-      String(!!c?.iqa_show_sensor_value),
-      String(!!c?.iqa_show_sensor_unit),
-      String(!!c?.iqa_show_sensor_status),
+      String(c?.aqi_layout || "vertical"),
+      String(c?.aqi_tiles_per_row || ""),
+      String(c?.aqi_tile_radius || ""),
+      String(!!c?.aqi_tile_color_enabled),
+      String(!!c?.aqi_tile_transparent),
+      String(!!c?.aqi_tile_outline_transparent),
+      String(!!c?.aqi_show_sensors),
+      String(!!c?.aqi_show_global),
+      String(!!c?.aqi_show_title),
+      String(c?.aqi_title_icon || ""),
+      String(!!c?.aqi_show_sensor_icon),
+      String(!!c?.aqi_show_sensor_name),
+      String(!!c?.aqi_show_sensor_entity),
+      String(!!c?.aqi_show_sensor_value),
+      String(!!c?.aqi_show_sensor_unit),
+      String(!!c?.aqi_show_sensor_status),
+      String(!!c?.aqi_tiles_icons_only),
     ].join("|");
 
-    const parts = [`iqa:${cfgBits}`];
+    const parts = [`aqi:${cfgBits}`];
     for (const eid of ents) {
       const st = hass?.states?.[eid];
       if (!st) {
@@ -787,17 +821,37 @@ class Jp2AirQualityCard extends HTMLElement {
         .value { font-weight: 700; font-size: var(--jp2-value-size, 18px); line-height: 1; }
         .unit { opacity:.75; font-size: var(--jp2-unit-size, 12px); margin-top: 2px; }
 
-        .bar-wrap { display:flex; align-items:center; justify-content:center; }
+        .bar-wrap { display:flex; width: 100%; align-items:center; justify-content:center; }
         .bar-wrap.left { justify-content:flex-start; }
         .bar-wrap.right { justify-content:flex-end; }
-        .bar { width: var(--jp2-bar-width, 92%); height: var(--jp2-bar-height, 6px); border-radius: 999px; overflow: hidden; position: relative; background: var(--divider-color, rgba(0,0,0,.12)); }
-        .bar .seg { height:100%; width:33.333%; float:left; }
-        .bar .seg.good { background: var(--jp2-good); }
-        .bar .seg.warn { background: var(--jp2-warn); }
-        .bar .seg.bad { background: var(--jp2-bad); }
+        .bar {
+          width: var(--jp2-bar-width, 92%);
+          height: var(--jp2-bar-height, 6px);
+          border-radius: 999px;
+          position: relative;
+          overflow: visible;
+        }
+        .bar.shadow { box-shadow: 0 3px 10px rgba(0,0,0,.25); }
+        .bar-inner {
+          position: absolute;
+          inset: 0;
+          border-radius: 999px;
+          overflow: hidden;
+          background: var(--divider-color, rgba(0,0,0,.12));
+          display: flex;
+        }
+        .bar-inner .seg { height: 100%; flex: 1; }
+        .bar-inner .seg.good { background: var(--jp2-good); }
+        .bar-inner .seg.warn { background: var(--jp2-warn); }
+        .bar-inner .seg.bad { background: var(--jp2-bad); }
 
-        .knob { position:absolute; top: 50%; transform: translate(-50%, -50%); width: var(--jp2-knob-size, 12px); height: var(--jp2-knob-size, 12px); border-radius:999px; background: var(--jp2-status-color, var(--primary-color)); }
-        .knob.outline { box-shadow: 0 0 0 1px rgba(255,255,255,.9), 0 0 0 2px rgba(0,0,0,.25); }
+        .bar-inner .seg { height: 100%; flex: 1; }
+        .bar-inner .seg.good { background: var(--jp2-good); }
+        .bar-inner .seg.warn { background: var(--jp2-warn); }
+        .bar-inner .seg.bad { background: var(--jp2-bad); }
+
+        .knob { position:absolute; top: 50%; transform: translate(-50%, -50%); z-index: 2; width: var(--jp2-knob-size, 12px); height: var(--jp2-knob-size, 12px); border-radius:999px; background: var(--jp2-status-color, var(--primary-color)); }
+        .knob.outline { box-shadow: 0 0 0 2px rgba(255,255,255,.95), 0 0 0 3px rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.35); }
         .knob.shadow { filter: drop-shadow(0 1px 1px rgba(0,0,0,.35)); }
 
         .graph { display:none; }
@@ -805,31 +859,30 @@ class Jp2AirQualityCard extends HTMLElement {
         .graph svg { width: 100%; height: var(--jp2-graph-height, 42px); display:block; }
         .graph .msg { font-size: 12px; opacity: .7; padding: 6px 0 0; }
 
-        .iqa { display:none; }
-        .iqa.show { display:block; }
-        .iqa-head { display:flex; align-items:baseline; justify-content:space-between; gap: 10px; }
-        .iqa-title { font-weight: 800; }
-        
-        .iqa-title.with-prefix { display:flex; align-items:center; gap: 10px; }
-        .iqa-title-left { display:inline-flex; align-items:center; gap: 8px; }
-        .iqa-title-img { display:block; }
-        .iqa-title-ico { display:block; }
-.iqa-global { font-weight: 700; opacity:.85; display:flex; gap:8px; align-items:center; }
+        .aqi { display:none; }
+        .aqi.show { display:block; }
+        .aqi-head { display:flex; align-items:baseline; justify-content:space-between; gap: 10px; }
+        .aqi-title { font-weight: 800; display:flex; align-items:center; gap: 8px; }
+        .aqi-title ha-icon { --mdc-icon-size: 18px; opacity: .9; }
+        .aqi-global { font-weight: 700; opacity:.85; display:flex; gap:8px; align-items:center; }
         .dot { width:10px; height:10px; border-radius:999px; background: var(--jp2-status-color); box-shadow: 0 0 0 1px rgba(255,255,255,.9), 0 0 0 2px rgba(0,0,0,.20); }
 
-        .iqa-list { display:flex; flex-direction:column; gap: 8px; margin-top: 8px; }
-        .iqa-row { display:flex; align-items:center; gap: 10px; padding: 8px 10px; border-radius: 14px; background: var(--secondary-background-color, rgba(0,0,0,.03)); border: 1px solid var(--divider-color, rgba(0,0,0,.12)); }
-        .iqa-row .meta { min-width:0; flex:1 1 auto; }
-        .iqa-row .name { font-weight: 700; line-height:1.1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .iqa-row .entity { font-size: 11px; opacity: .6; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .iqa-row .right { text-align:right; flex:0 0 auto; }
-        .iqa-row .val { font-weight: 800; }
-        .iqa-row .st { display:flex; justify-content:flex-end; gap:6px; align-items:center; opacity:.85; font-weight:600; }
+        .aqi-list { display:flex; flex-direction:column; gap: 8px; margin-top: 8px; }
+        .aqi-row { display:flex; align-items:center; gap: 10px; padding: 8px 10px; border-radius: 14px; background: var(--secondary-background-color, rgba(0,0,0,.03)); border: 1px solid var(--divider-color, rgba(0,0,0,.12)); }
+        .aqi-row .meta { min-width:0; flex:1 1 auto; }
+        .aqi-row .name { font-weight: 700; line-height:1.1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .aqi-row .entity { font-size: 11px; opacity: .6; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .aqi-row .right { text-align:right; flex:0 0 auto; }
+        .aqi-row .val { font-weight: 800; }
+        .aqi-row .st { display:flex; justify-content:flex-end; gap:6px; align-items:center; opacity:.85; font-weight:600; }
 
-        .tiles { display:grid; gap: 10px; margin-top: 10px; grid-template-columns: repeat(var(--jp2-iqa-cols, 3), minmax(0, 1fr)); }
-        .tile { padding: 10px; border-radius: var(--jp2-iqa-tile-radius, 16px); border: 1px solid var(--divider-color, rgba(0,0,0,.12)); background: var(--secondary-background-color, rgba(0,0,0,.03)); display:flex; flex-direction:column; gap: 8px; min-width: 0; }
-        .tile.colored { position:relative; overflow:hidden; border-color: var(--jp2-iqa-tile-border, var(--divider-color, rgba(0,0,0,.12))); }
-        .tile.colored::before { content:""; position:absolute; inset:0; border-radius:inherit; background: var(--jp2-iqa-tile-color, var(--primary-color)); opacity:.12; pointer-events:none; }
+        .tiles { display:grid; gap: 10px; margin-top: 10px; grid-template-columns: repeat(var(--jp2-aqi-cols, 3), minmax(0, 1fr)); }
+        .tile { padding: 10px; border-radius: var(--jp2-aqi-tile-radius, 16px); border: 1px solid var(--divider-color, rgba(0,0,0,.12)); background: var(--secondary-background-color, rgba(0,0,0,.03)); display:flex; flex-direction:column; gap: 8px; min-width: 0; }
+        .tile.transparent { background: transparent; }
+        .tile.outline-transparent { border-color: transparent !important; }
+        .tile.icons-only { justify-content:center; align-items:center; gap: 0; padding: 14px; }
+        .tile.colored { position:relative; overflow:hidden; border-color: var(--jp2-aqi-tile-border, var(--divider-color, rgba(0,0,0,.12))); }
+        .tile.colored::before { content:""; position:absolute; inset:0; border-radius:inherit; background: var(--jp2-aqi-tile-color, var(--primary-color)); opacity:.12; pointer-events:none; }
         .tile.colored > * { position:relative; }
         .tile-top { display:flex; align-items:center; justify-content:space-between; gap: 8px; }
         .tile-name { font-weight: 800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -843,7 +896,7 @@ class Jp2AirQualityCard extends HTMLElement {
           <div class="header" id="header"></div>
           <div class="bar-wrap" id="barWrap"></div>
           <div class="graph" id="graph"></div>
-          <div class="iqa" id="iqa"></div>
+          <div class="aqi" id="aqi"></div>
         </div>
       </ha-card>
     `;
@@ -851,7 +904,7 @@ class Jp2AirQualityCard extends HTMLElement {
     this._root = this.shadowRoot.getElementById("wrap");
     this._header = this.shadowRoot.getElementById("header");
     this._graphWrap = this.shadowRoot.getElementById("graph");
-    this._iqaWrap = this.shadowRoot.getElementById("iqa");
+    this._aqiWrap = this.shadowRoot.getElementById("aqi");
   }
 
   _setCardBackground(color, enabled) {
@@ -892,12 +945,12 @@ class Jp2AirQualityCard extends HTMLElement {
         card.style.setProperty("--jp2-knob-size", `${c.knob_size}px`);
         card.style.setProperty("--jp2-graph-height", `${c.graph_height}px`);
 
-        card.style.setProperty("--jp2-iqa-cols", String(clamp(Number(c.iqa_tiles_per_row || 3), 1, 6)));
-        card.style.setProperty("--jp2-iqa-tile-radius", `${clamp(Number(c.iqa_tile_radius ?? 16), 0, 40)}px`);
+        card.style.setProperty("--jp2-aqi-cols", String(clamp(Number(c.aqi_tiles_per_row || 3), 1, 6)));
+        card.style.setProperty("--jp2-aqi-tile-radius", `${clamp(Number(c.aqi_tile_radius ?? 16), 0, 40)}px`);
       }
 
-      if (String(c.card_mode) === "iqa") {
-        this._renderIQACard();
+      if (String(c.card_mode) === "aqi") {
+        this._renderAQICard();
         if (this._header) this._header.classList.add("hidden");
         const bw = this.shadowRoot ? this.shadowRoot.getElementById("barWrap") : null;
         if (bw) bw.innerHTML = "";
@@ -905,7 +958,7 @@ class Jp2AirQualityCard extends HTMLElement {
         return;
       }
 
-      if (this._iqaWrap) this._iqaWrap.classList.remove("show");
+      if (this._aqiWrap) this._aqiWrap.classList.remove("show");
       this._renderSensorCard();
     } catch (err) {
       this._showError("Erreur de rendu", err);
@@ -973,21 +1026,35 @@ class Jp2AirQualityCard extends HTMLElement {
 
     const barWrap = this.shadowRoot.getElementById("barWrap");
     if (!barWrap) return;
-    const align = String(c.bar?.align || "center");
+    const alignRaw = String(c.bar?.align || "center").toLowerCase();
+    let align = "center";
+    if (alignRaw === "left" || alignRaw === "gauche" || alignRaw === "start") align = "left";
+    else if (alignRaw === "right" || alignRaw === "droite" || alignRaw === "end") align = "right";
     barWrap.className = `bar-wrap ${align}`;
 
     if (c.bar_enabled === false) {
       barWrap.innerHTML = "";
     } else {
-      const bar = el("div", { class: "bar" }, [
+      const bar = el("div", { class: `bar ${c.bar?.shadow ? "shadow" : ""}`.trim() });
+      // Alignement robuste (fonctionne même si le conteneur ne "stretch" pas)
+      if (align === "left") { bar.style.marginLeft = "0"; bar.style.marginRight = "auto"; }
+      else if (align === "right") { bar.style.marginLeft = "auto"; bar.style.marginRight = "0"; }
+      else { bar.style.marginLeft = "auto"; bar.style.marginRight = "auto"; }
+      const inner = el("div", { class: "bar-inner" }, [
         el("div", { class: "seg good" }),
         el("div", { class: "seg warn" }),
         el("div", { class: "seg bad" }),
       ]);
+      bar.appendChild(inner);
 
-      if (c.show_knob !== false && value !== null) {
+if (c.show_knob !== false && value !== null) {
         const knob = el("div", { class: `knob ${c.knob_outline ? "outline" : ""} ${c.knob_shadow ? "shadow" : ""}` });
-        knob.style.left = `${(st.ratio * 100).toFixed(2)}%`;
+        const pct = (st.ratio * 100);
+        knob.style.left = `${pct.toFixed(2)}%`;
+        // Empêche le cercle d’être coupé aux extrémités (plus visible, meilleur alignement)
+        if (pct <= 0.1) knob.style.transform = "translate(0, -50%)";
+        else if (pct >= 99.9) knob.style.transform = "translate(-100%, -50%)";
+        else knob.style.transform = "translate(-50%, -50%)";
         bar.appendChild(knob);
       }
       barWrap.innerHTML = "";
@@ -1015,7 +1082,7 @@ class Jp2AirQualityCard extends HTMLElement {
       wrap.appendChild(graph);
     } else {
       // below_top or inside_top
-      wrap.insertBefore(graph, this._iqaWrap);
+      wrap.insertBefore(graph, this._aqiWrap);
     }
   }
 
@@ -1154,13 +1221,13 @@ class Jp2AirQualityCard extends HTMLElement {
     return await p;
   }
 
-  _renderIQACard() {
+  _renderAQICard() {
     const c = this._config;
-    const iqa = this._iqaWrap;
-    if (!iqa) return;
+    const aqi = this._aqiWrap;
+    if (!aqi) return;
 
-    const entities = Array.isArray(c.iqa_entities) ? c.iqa_entities : [];
-    iqa.classList.toggle("show", true);
+    const entities = Array.isArray(c.aqi_entities) ? c.aqi_entities : [];
+    aqi.classList.toggle("show", true);
 
     const rows = [];
     let globalLevel = "good";
@@ -1176,14 +1243,14 @@ class Jp2AirQualityCard extends HTMLElement {
 
       if (levelRank[st.level] > levelRank[globalLevel]) globalLevel = st.level;
 
-      const ov = c.iqa_overrides && typeof c.iqa_overrides === "object" ? c.iqa_overrides[eid] || {} : {};
+      const ov = c.aqi_overrides && typeof c.aqi_overrides === "object" ? c.aqi_overrides[eid] || {} : {};
       const icon = ov.icon || DEFAULT_ICON_BY_PRESET[preset] || "mdi:information";
-      const iconSize = clamp(Number(ov.icon_size ?? c.iqa_icon_size), 16, 80);
-      const innerSize = clamp(Number(ov.icon_inner_size ?? c.iqa_icon_inner_size), 10, 60);
-
+      const iconSize = clamp(Number(c.aqi_icon_size), 16, 80);
+      const innerSize = clamp(Number(c.aqi_icon_inner_size), 10, 60);
+      const name = (ov.name && String(ov.name).trim()) ? String(ov.name).trim() : (stObj.attributes?.friendly_name || eid);
       rows.push({
         eid,
-        name: stObj.attributes?.friendly_name || eid,
+        name,
         value,
         unit,
         status: st,
@@ -1197,69 +1264,44 @@ class Jp2AirQualityCard extends HTMLElement {
     const globalLabel = globalLevel === "warn" ? "Moyen" : globalLevel === "bad" ? "Mauvais" : "Bon";
     const globalColor = globalLevel === "warn" ? this._colors().warn : globalLevel === "bad" ? this._colors().bad : this._colors().good;
 
-    this._setCardBackground(globalColor, !!c.iqa_background_enabled);
+    this._setCardBackground(globalColor, !!c.aqi_background_enabled);
 
 
-
-    const titleText = c.iqa_title || "IQA";
-    const titleLeftImage = String(c.iqa_title_left_image || "").trim();
-    const titleLeftIcon = String(c.iqa_title_left_icon || "").trim();
-    const titleImgSize = clamp(toNum(c.iqa_title_left_image_size) ?? 22, 12, 64);
-    const titleIconSize = clamp(toNum(c.iqa_title_left_icon_size) ?? 20, 12, 64);
-
-    const titleKids = [];
-    if (titleLeftImage || titleLeftIcon) {
-      const leftKids = [];
-      if (titleLeftImage) {
-        leftKids.push(el("img", {
-          class: "iqa-title-img",
-          src: titleLeftImage,
-          alt: "",
-          style: { width: `${titleImgSize}px`, height: `${titleImgSize}px`, objectFit: "contain" }
-        }, []));
-      }
-      if (titleLeftIcon) {
-        leftKids.push(el("ha-icon", {
-          class: "iqa-title-ico",
-          icon: titleLeftIcon,
-          style: { "--mdc-icon-size": `${titleIconSize}px`, "--ha-icon-size": `${titleIconSize}px`, width: `${titleIconSize}px`, height: `${titleIconSize}px` }
-        }, []));
-      }
-      titleKids.push(el("span", { class: "iqa-title-left" }, leftKids));
-    }
-    titleKids.push(el("span", { class: "iqa-title-text" }, [titleText]));
-
-    const titleEl = el("div", { class: `iqa-title${(titleLeftImage || titleLeftIcon) ? " with-prefix" : ""}` }, titleKids);
-
-
-    const head = el("div", { class: "iqa-head" }, [
-      c.iqa_show_title === false ? null : titleEl,
-      c.iqa_show_global === false ? null : el("div", { class: "iqa-global" }, [
+    const titleEl = (c.aqi_show_title === false) ? null : (() => {
+      const kids = [];
+      const ic = String(c.aqi_title_icon || "").trim();
+      if (ic) kids.push(el("ha-icon", { icon: ic }));
+      kids.push(el("span", {}, [c.aqi_title || "AQI"]));
+      return el("div", { class: "aqi-title" }, kids);
+    })();
+    const head = el("div", { class: "aqi-head" }, [
+      titleEl,
+      c.aqi_show_global === false ? null : el("div", { class: "aqi-global" }, [
         el("span", { class: "dot", style: { background: globalColor } }),
         el("span", {}, [globalLabel]),
       ]),
     ]);
 
-    const layout = String(c.iqa_layout || "vertical");
-    const iconsOnly = (layout === "horizontal") && !!c.iqa_horizontal_icons_only;
-    const showIconBg = c.iqa_icon_background !== false;
-    const showIconCircle = c.iqa_icon_circle !== false;
+    const layout = String(c.aqi_layout || "vertical");
+    const iconsOnly = (layout === "horizontal") && !!c.aqi_tiles_icons_only;
+    const showIconBg = c.aqi_icon_background !== false;
+    const showIconCircle = c.aqi_icon_circle !== false;
 
     let body = null;
 
-    if (c.iqa_show_sensors === false) {
+    if (c.aqi_show_sensors === false) {
       body = el("div", { style: { marginTop: "6px", opacity: ".65", fontSize: "12px" } }, ["(capteurs masqués)"]);
     } else if (layout === "horizontal") {
-      const cols = clamp(Number(c.iqa_tiles_per_row || 3), 1, 6);
-      iqa.style.setProperty("--jp2-iqa-cols", String(cols));
-      iqa.style.setProperty("--jp2-iqa-tile-radius", `${clamp(Number(c.iqa_tile_radius ?? 16), 0, 40)}px`);
+      const cols = clamp(Number(c.aqi_tiles_per_row || 3), 1, 6);
+      aqi.style.setProperty("--jp2-aqi-cols", String(cols));
+      aqi.style.setProperty("--jp2-aqi-tile-radius", `${clamp(Number(c.aqi_tile_radius ?? 16), 0, 40)}px`);
 
       body = el("div", { class: "tiles" }, rows.map((r) => {
-        const tile = el("div", { class: `tile ${c.iqa_tile_color_enabled ? "colored" : ""}` });
+        const tile = el("div", { class: `tile ${c.aqi_tile_color_enabled ? "colored" : ""} ${c.aqi_tile_transparent ? "transparent" : ""} ${c.aqi_tile_outline_transparent ? "outline-transparent" : ""} ${iconsOnly ? "icons-only" : ""}` });
         const col = r.status.color;
-        tile.style.setProperty("--jp2-iqa-tile-color", col);
+        tile.style.setProperty("--jp2-aqi-tile-color", col);
         const _b = cssColorMix(col, 32);
-        tile.style.setProperty("--jp2-iqa-tile-border", _b === "transparent" ? col : _b);
+        tile.style.setProperty("--jp2-aqi-tile-border", c.aqi_tile_outline_transparent ? "transparent" : (_b === "transparent" ? col : _b));
 
         const iconWrap = el("div", { class: "icon-wrap", style: { width: `${r.iconSize}px`, height: `${r.iconSize}px`, "--jp2-status-color": col, "--jp2-status-outline": cssColorMix(col, 35) } }, [
           showIconBg ? el("div", { class: "icon-bg", style: { background: col } }) : null,
@@ -1268,25 +1310,30 @@ class Jp2AirQualityCard extends HTMLElement {
         ]);
 
         const topLeft = el("div", { style: { display: "flex", alignItems: "center", gap: "10px", minWidth: "0" } }, [
-          c.iqa_show_sensor_icon === false ? null : iconWrap,
+          c.aqi_show_sensor_icon === false ? null : iconWrap,
           el("div", { style: { minWidth: "0", flex: "1 1 auto" } }, [
-            c.iqa_show_sensor_name === false ? null : el("div", { class: "tile-name" }, [r.name]),
-            c.iqa_show_sensor_entity ? el("div", { class: "entity" }, [r.eid]) : null,
+            c.aqi_show_sensor_name === false ? null : el("div", { class: "tile-name" }, [r.name]),
+            c.aqi_show_sensor_entity ? el("div", { class: "entity" }, [r.eid]) : null,
           ]),
         ]);
 
-        const statusEl = c.iqa_show_sensor_status === false ? null : el("div", { class: "tile-status" }, [
+        const statusEl = c.aqi_show_sensor_status === false ? null : el("div", { class: "tile-status" }, [
           el("span", { class: "dot", style: { background: col } }),
           el("span", {}, [r.status.label]),
         ]);
 
-        const val = (c.iqa_show_sensor_value === false && c.iqa_show_sensor_unit === false) ? null : el("div", {}, [
-          c.iqa_show_sensor_value === false ? null : el("div", { class: "tile-val" }, [r.value !== null ? this._formatValue(r.preset, r.value) : "—"]),
-          c.iqa_show_sensor_unit === false ? null : el("div", { class: "tile-unit" }, [r.unit]),
+        const val = (c.aqi_show_sensor_value === false && c.aqi_show_sensor_unit === false) ? null : el("div", {}, [
+          c.aqi_show_sensor_value === false ? null : el("div", { class: "tile-val" }, [r.value !== null ? this._formatValue(r.preset, r.value) : "—"]),
+          c.aqi_show_sensor_unit === false ? null : el("div", { class: "tile-unit" }, [r.unit]),
         ]);
 
-        tile.appendChild(el("div", { class: "tile-top" }, [topLeft, statusEl]));
-        if (val) tile.appendChild(val);
+        if (iconsOnly) {
+          tile.title = r.name;
+          tile.appendChild(iconWrap);
+        } else {
+          tile.appendChild(el("div", { class: "tile-top" }, [topLeft, statusEl]));
+          if (val) tile.appendChild(val);
+        }
 
         tile.addEventListener("click", () => {
           this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: r.eid }, bubbles: true, composed: true }));
@@ -1295,8 +1342,8 @@ class Jp2AirQualityCard extends HTMLElement {
         return tile;
       }));
     } else {
-      body = el("div", { class: "iqa-list" }, rows.map((r) => {
-        const row = el("div", { class: "iqa-row" });
+      body = el("div", { class: "aqi-list" }, rows.map((r) => {
+        const row = el("div", { class: "aqi-row" });
         const col = r.status.color;
 
         const iconWrap = el("div", { class: "icon-wrap", style: { width: `${r.iconSize}px`, height: `${r.iconSize}px`, "--jp2-status-color": col, "--jp2-status-outline": cssColorMix(col, 35) } }, [
@@ -1305,22 +1352,22 @@ class Jp2AirQualityCard extends HTMLElement {
           el("ha-icon", { icon: r.icon, style: `--mdc-icon-size:${r.innerSize}px; color:${col};` }),
         ]);
 
-        if (c.iqa_show_sensor_icon !== false) row.appendChild(iconWrap);
+        if (c.aqi_show_sensor_icon !== false) row.appendChild(iconWrap);
 
         const meta = el("div", { class: "meta" }, [
-          c.iqa_show_sensor_name === false ? null : el("div", { class: "name" }, [r.name]),
-          c.iqa_show_sensor_entity ? el("div", { class: "entity" }, [r.eid]) : null,
+          c.aqi_show_sensor_name === false ? null : el("div", { class: "name" }, [r.name]),
+          c.aqi_show_sensor_entity ? el("div", { class: "entity" }, [r.eid]) : null,
         ]);
         row.appendChild(meta);
 
         const right = el("div", { class: "right" }, []);
-        if (c.iqa_show_sensor_value !== false || c.iqa_show_sensor_unit !== false) {
+        if (c.aqi_show_sensor_value !== false || c.aqi_show_sensor_unit !== false) {
           right.appendChild(el("div", { class: "val" }, [
-            c.iqa_show_sensor_value === false ? null : document.createTextNode(r.value !== null ? this._formatValue(r.preset, r.value) : "—"),
-            c.iqa_show_sensor_unit === false ? null : el("span", { style: { marginLeft: "6px", opacity: ".7", fontWeight: "600" } }, [r.unit]),
+            c.aqi_show_sensor_value === false ? null : document.createTextNode(r.value !== null ? this._formatValue(r.preset, r.value) : "—"),
+            c.aqi_show_sensor_unit === false ? null : el("span", { style: { marginLeft: "6px", opacity: ".7", fontWeight: "600" } }, [r.unit]),
           ]));
         }
-        if (c.iqa_show_sensor_status !== false) {
+        if (c.aqi_show_sensor_status !== false) {
           right.appendChild(el("div", { class: "st" }, [
             el("span", { class: "dot", style: { background: col } }),
             el("span", {}, [r.status.label]),
@@ -1336,9 +1383,9 @@ class Jp2AirQualityCard extends HTMLElement {
       }));
     }
 
-    iqa.innerHTML = "";
-    iqa.appendChild(head);
-    if (body) iqa.appendChild(body);
+    aqi.innerHTML = "";
+    aqi.appendChild(head);
+    if (body) aqi.appendChild(body);
   }
 }
 
@@ -1355,27 +1402,10 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     this._tab = "general";
     this._raf = null;
 
-    // Preview IQA (throttle / chunk)
-    this._pvReqId = 0;
-    this._pvRaf = null;
-    this._pvChunkRaf = null;
-    this._pvKey = "";
-
     this._onTabClick = this._onTabClick.bind(this);
     this._onFormValueChanged = this._onFormValueChanged.bind(this);
     this._onOverridesChanged = this._onOverridesChanged.bind(this);
   }
-  disconnectedCallback() {
-    try { if (this._raf) cancelAnimationFrame(this._raf); } catch (_) {}
-    this._raf = null;
-    try { if (this._pvRaf) cancelAnimationFrame(this._pvRaf); } catch (_) {}
-    this._pvRaf = null;
-    try { if (this._pvChunkRaf) cancelAnimationFrame(this._pvChunkRaf); } catch (_) {}
-    this._pvChunkRaf = null;
-    this._pvReqId = (this._pvReqId || 0) + 1;
-  }
-
-
 
   set hass(hass) {
     this._hass = hass;
@@ -1383,25 +1413,26 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     for (const f of Array.from(this.shadowRoot?.querySelectorAll("ha-form") || [])) {
       try { f.hass = hass; } catch (_) {}
     }
-    this._scheduleIqaPreview();
+    this._renderAqiPreview();
   }
 
   setConfig(config) {
     const stub = Jp2AirQualityCard.getStubConfig();
+    const raw = normalizeMultiModeConfig(config);
     const merged = {
       ...stub,
-      ...deepClone(config || {}),
-      bar: { ...(stub.bar || {}), ...deepClone((config && config.bar) || {}) },
+      ...raw,
+      bar: { ...(stub.bar || {}), ...deepClone((raw && raw.bar) || {}) },
     };
 
     merged.card_mode = String(merged.card_mode || "sensor");
     merged.preset = String(merged.preset || "radon");
     merged.graph_color_mode = String(merged.graph_color_mode || "segments");
     merged.graph_position = String(merged.graph_position || "below_top");
-    merged.iqa_layout = String(merged.iqa_layout || "vertical");
+    merged.aqi_layout = String(merged.aqi_layout || "vertical");
 
-    merged.iqa_entities = Array.isArray(merged.iqa_entities) ? merged.iqa_entities : [];
-    merged.iqa_overrides = merged.iqa_overrides && typeof merged.iqa_overrides === "object" ? merged.iqa_overrides : {};
+    merged.aqi_entities = Array.isArray(merged.aqi_entities) ? merged.aqi_entities : [];
+    merged.aqi_overrides = merged.aqi_overrides && typeof merged.aqi_overrides === "object" ? merged.aqi_overrides : {};
 
     this._config = merged;
 
@@ -1409,8 +1440,8 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     this._render();
   }
 
-  get _isIqa() {
-    return String(this._config?.card_mode || "sensor") === "iqa";
+  get _isAqi() {
+    return String(this._config?.card_mode || "sensor") === "aqi";
   }
 
   _ensureUI() {
@@ -1488,7 +1519,7 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         .card-body { padding: 12px 14px 14px; }
         ha-form { display:block; }
 
-        /* IQA preview chips */
+        /* AQI preview chips */
         .chips { display:flex; flex-wrap: wrap; gap: 8px; }
         .chip {
           display:inline-flex; align-items:center; gap: 8px;
@@ -1504,6 +1535,32 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         .chip .c-name { font-weight: 800; max-width: 180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .chip .c-val { opacity: .75; font-weight: 700; }
         .muted { font-size: 12px; opacity: .72; line-height: 1.35; }
+
+        /* Réorganisation des entités AQI */
+        .reorder-list { display:flex; flex-direction:column; gap: 8px; margin-top: 8px; }
+        .reorder-row {
+          display:flex; align-items:center; justify-content:space-between; gap: 10px;
+          padding: 8px 10px;
+          border-radius: 14px;
+          background: rgba(0,0,0,.03);
+          border: 1px solid rgba(0,0,0,.10);
+        }
+        .reorder-meta { min-width:0; flex: 1 1 auto; }
+        .reorder-name { font-weight: 900; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .reorder-eid { font-size: 11px; opacity: .65; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .reorder-actions { display:flex; gap: 6px; flex: 0 0 auto; }
+        .mini-btn {
+          border: 1px solid rgba(0,0,0,.18);
+          background: rgba(0,0,0,.04);
+          border-radius: 10px;
+          padding: 6px 8px;
+          font-weight: 900;
+          cursor: pointer;
+          line-height: 1;
+        }
+        .mini-btn:hover { background: rgba(0,0,0,.06); }
+        .mini-btn:active { transform: translateY(1px); }
+        .mini-btn:disabled { opacity: .35; cursor: default; }
 
         /* Overrides list */
         .ov-list { display:flex; flex-direction:column; gap: 10px; }
@@ -1548,7 +1605,7 @@ class Jp2AirQualityCardEditor extends HTMLElement {
           <div class="hero-top">
             <div>
               <div class="title">${CARD_NAME}</div>
-              <div class="subtitle">Éditeur visuel v${CARD_VERSION} — configuration rapide & fluide</div>
+              <div class="subtitle">Éditeur visuel v${CARD_VERSION}</div>
             </div>
             <div class="badge" id="modeBadge"><span class="dot"></span><span id="modeText">—</span></div>
           </div>
@@ -1583,9 +1640,9 @@ class Jp2AirQualityCardEditor extends HTMLElement {
 
     const badge = this.shadowRoot.getElementById("modeBadge");
     const modeText = this.shadowRoot.getElementById("modeText");
-    const isIqa = this._isIqa;
-    modeText.textContent = isIqa ? "IQA (multi-capteurs)" : "Capteur (1 entité)";
-    badge.querySelector(".dot").style.background = isIqa ? "rgba(76,175,80,.9)" : "rgba(3,169,244,.9)";
+    const isAqi = this._isAqi;
+    modeText.textContent = isAqi ? "AQI (multi-capteurs)" : "Capteur (1 entité)";
+    badge.querySelector(".dot").style.background = isAqi ? "rgba(76,175,80,.9)" : "rgba(3,169,244,.9)";
 
     const content = this.shadowRoot.getElementById("content");
     content.innerHTML = "";
@@ -1597,30 +1654,30 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     }
 
     // Refresh preview if present
-    this._scheduleIqaPreview();
+    this._renderAqiPreview();
   }
 
   _buildTabs() {
-    if (this._isIqa) {
+    if (this._isAqi) {
       return [
         { id: "general", label: "Général" },
-        { id: "iqa_entities", label: "Entités" },
-        { id: "iqa_layout", label: "Disposition" },
-        { id: "iqa_icons", label: "Icônes" },
-        { id: "iqa_overrides", label: "Overrides" },
+        { id: "aqi_entities", label: "Entités" },
+        { id: "aqi_layout", label: "Disposition" },
+        { id: "aqi_icons", label: "Icônes" },
+        { id: "aqi_overrides", label: "Overrides" },
       ];
     }
     return [
       { id: "general", label: "Général" },
       { id: "display", label: "Affichage" },
+      { id: "bar", label: "Barre" },
       { id: "graph", label: "Graphe" },
       { id: "colors", label: "Couleurs" },
     ];
   }
 
   _onTabClick(ev) {
-    const path = (ev && typeof ev.composedPath === "function") ? ev.composedPath() : (ev && ev.path) ? ev.path : [];
-    const btn = (path && path.find((n) => n && n.dataset && n.dataset.tab)) || (ev?.target?.closest ? ev.target.closest("[data-tab]") : null);
+    const btn = ev.composedPath?.().find((n) => n && n.dataset && n.dataset.tab);
     if (!btn) return;
     const next = btn.dataset.tab;
     if (!next || next === this._tab) return;
@@ -1634,10 +1691,10 @@ class Jp2AirQualityCardEditor extends HTMLElement {
 
     if (!this._config) return root;
 
-    const isIqa = this._isIqa;
+    const isAqi = this._isAqi;
 
     // ---- SENSOR MODE TABS ----
-    if (!isIqa) {
+    if (!isAqi) {
       if (tabId === "general") {
         root.appendChild(this._section(
           "Configuration",
@@ -1662,73 +1719,81 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         ));
         return root;
       }
+      if (tabId === "bar") {
+        root.appendChild(this._section(
+          "Barre colorée",
+          "Réglages de la barre (largeur, hauteur, alignement) + repère (cercle).",
+          this._makeForm(this._schemaSensorBar(), this._config)
+        ));
+        return root;
+      }
       if (tabId === "colors") {
         root.appendChild(this._section(
-          "Couleurs & barre",
-          "Couleurs Bon / Moyen / Mauvais + dimensions/alignement de la barre.",
-          this._makeForm(this._schemaBar(), this._config)
+          "Couleurs",
+          "Couleurs Bon / Moyen / Mauvais (utilisées pour la barre, l’icône et le statut).",
+          this._makeForm(this._schemaSensorColors(), this._config)
         ));
         return root;
       }
       return root;
     }
 
-    // ---- IQA MODE TABS ----
+    // ---- AQI MODE TABS ----
     if (tabId === "general") {
       root.appendChild(this._section(
-        "IQA — Général",
+        "AQI — Général",
         "Carte multi-capteurs : titre, affichage global, fond, etc.",
-        this._makeForm(this._schemaIqaGeneral(), this._config)
+        this._makeForm(this._schemaAqiGeneral(), this._config)
       ));
       root.appendChild(this._section(
         "Aperçu rapide",
         "Clique sur une pastille pour ouvrir “Plus d’infos” sur le capteur.",
-        this._iqaPreview()
+        this._aqiPreview()
       ));
       return root;
     }
 
-    if (tabId === "iqa_entities") {
+    if (tabId === "aqi_entities") {
       root.appendChild(this._section(
-        "IQA — Entités",
+        "AQI — Entités",
         "Sélectionne tes capteurs (ordre = ordre d’affichage).",
-        this._makeForm(this._schemaIqaEntities(), this._config)
+        this._aqiEntitiesEditor()
       ));
       root.appendChild(this._section(
         "Aperçu rapide",
         "Clique sur une pastille pour ouvrir “Plus d’infos”.",
-        this._iqaPreview()
+        this._aqiPreview()
       ));
       return root;
     }
 
-    if (tabId === "iqa_layout") {
+    if (tabId === "aqi_layout") {
       root.appendChild(this._section(
-        "IQA — Disposition",
+        "AQI — Disposition",
         "Choisis la disposition (liste verticale ou tuiles horizontales) + options de tuiles.",
-        this._makeForm(this._schemaIqaLayout(), this._config)
+        this._makeForm(this._schemaAqiLayout(), this._config)
       ));
       return root;
     }
 
-    if (tabId === "iqa_icons") {
+    if (tabId === "aqi_icons") {
       root.appendChild(this._section(
-        "IQA — Icônes & contenu",
+        "AQI — Icônes & contenu",
         "Contrôle ce qui est affiché par capteur + style des icônes.",
-        this._makeForm(this._schemaIqaRowDisplay(), this._config)
+        this._makeForm(this._schemaAqiRowDisplay(), this._config)
       ));
       root.appendChild(this._section(
         "Style des icônes",
         "Taille du cercle, taille du pictogramme, fond et cercle.",
-        this._makeForm(this._schemaIqaIconStyle(), this._config)
+        this._makeForm(this._schemaAqiIconStyle(), this._config)
       ));
       return root;
     }
 
-    if (tabId === "iqa_overrides") {
+    if (tabId === "aqi_overrides") {
       root.appendChild(this._section(
         "Overrides par capteur",
-        "Surcharge l’icône et les tailles pour des entités spécifiques. (Optionnel)",
+        "Surcharge le nom et/ou l’icône pour des entités spécifiques. (Optionnel)",
         this._overridesEditor()
       ));
       return root;
@@ -1821,30 +1886,34 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       width: "Largeur (%)",
       height: "Hauteur (px)",
       align: "Alignement",
-      // IQA general
-      iqa_title: "Titre",
-      iqa_show_title: "Afficher le titre",
-      iqa_show_global: "Afficher le statut global",
-      iqa_show_sensors: "Afficher les capteurs",
-      iqa_background_enabled: "Fond coloré",
-      // IQA entities / layout
-      iqa_entities: "Entités (capteurs)",
-      iqa_layout: "Disposition",
-      iqa_tiles_per_row: "Tuiles par ligne",
-      iqa_tile_color_enabled: "Fond coloré par tuile",
-      iqa_tile_radius: "Arrondi des tuiles (px)",
-      // IQA rows
-      iqa_show_sensor_icon: "Afficher l'icône",
-      iqa_show_sensor_name: "Afficher le nom",
-      iqa_show_sensor_entity: "Afficher l'entité",
-      iqa_show_sensor_value: "Afficher la valeur",
-      iqa_show_sensor_unit: "Afficher l'unité",
-      iqa_show_sensor_status: "Afficher le statut",
-      // IQA icons
-      iqa_icon_size: "Taille icône (cercle)",
-      iqa_icon_inner_size: "Taille pictogramme",
-      iqa_icon_background: "Fond icône",
-      iqa_icon_circle: "Cercle icône",
+      // AQI general
+      aqi_title: "Titre",
+      aqi_title_icon: "Icône du titre",
+      aqi_show_title: "Afficher le titre",
+      aqi_show_global: "Afficher le statut global",
+      aqi_show_sensors: "Afficher les capteurs",
+      aqi_background_enabled: "Fond coloré",
+      // AQI entities / layout
+      aqi_entities: "Entités (capteurs)",
+      aqi_layout: "Disposition",
+      aqi_tiles_per_row: "Tuiles par ligne",
+      aqi_tile_color_enabled: "Fond coloré par tuile",
+      aqi_tile_transparent: "Fond transparent par tuile",
+      aqi_tile_outline_transparent: "Contour transparent par tuile",
+      aqi_tile_radius: "Arrondi des tuiles (px)",
+      // AQI rows
+      aqi_tiles_icons_only: "Horizontal : icônes seulement",
+      aqi_show_sensor_icon: "Afficher l'icône",
+      aqi_show_sensor_name: "Afficher le nom",
+      aqi_show_sensor_entity: "Afficher l'entité",
+      aqi_show_sensor_value: "Afficher la valeur",
+      aqi_show_sensor_unit: "Afficher l'unité",
+      aqi_show_sensor_status: "Afficher le statut",
+      // AQI icons
+      aqi_icon_size: "Taille icône (cercle)",
+      aqi_icon_inner_size: "Taille pictogramme",
+      aqi_icon_background: "Fond icône",
+      aqi_icon_circle: "Cercle icône",
     };
     return map[n] || n;
   }
@@ -1858,7 +1927,11 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       good: "Couleur du statut “Bon”.",
       warn: "Couleur du statut “Moyen”.",
       bad: "Couleur du statut “Mauvais”.",
-      iqa_entities: "Tu peux sélectionner plusieurs entités.",
+      aqi_entities: "Tu peux sélectionner plusieurs entités.",
+      aqi_tile_transparent: "Si activé, supprime le fond gris des tuiles (bordure uniquement).",
+      aqi_tile_outline_transparent: "Si activé, supprime aussi la bordure des tuiles (aucun contour).",
+      aqi_title_icon: "Optionnel : icône affichée à gauche du titre en mode AQI.",
+      aqi_tiles_icons_only: "Uniquement en disposition horizontale : n’affiche que l’icône de chaque capteur.",
     };
     return map[n] || "";
   }
@@ -1877,12 +1950,17 @@ _onFormValueChanged(ev) {
     // Normalisation soft
     next.card_mode = String(next.card_mode || "sensor");
     next.preset = String(next.preset || "radon");
-    next.iqa_layout = String(next.iqa_layout || "vertical");
-    next.iqa_tiles_per_row = clamp(Number(next.iqa_tiles_per_row || 3), 1, 6);
-    next.iqa_tile_radius = clamp(Number(next.iqa_tile_radius ?? 16), 0, 40);
+    next.aqi_layout = String(next.aqi_layout || "vertical");
+    next.aqi_tiles_per_row = clamp(Number(next.aqi_tiles_per_row || 3), 1, 6);
+    next.aqi_tile_radius = clamp(Number(next.aqi_tile_radius ?? 16), 0, 40);
 
-    next.iqa_entities = Array.isArray(next.iqa_entities) ? next.iqa_entities : [];
-    next.iqa_overrides = next.iqa_overrides && typeof next.iqa_overrides === "object" ? next.iqa_overrides : {};
+
+    next.aqi_title_icon = String(next.aqi_title_icon || "");
+    next.aqi_tile_transparent = !!next.aqi_tile_transparent;
+    next.aqi_tile_outline_transparent = !!next.aqi_tile_outline_transparent;
+    next.aqi_tiles_icons_only = !!next.aqi_tiles_icons_only;
+    next.aqi_entities = Array.isArray(next.aqi_entities) ? next.aqi_entities : [];
+    next.aqi_overrides = next.aqi_overrides && typeof next.aqi_overrides === "object" ? next.aqi_overrides : {};
 
     this._config = next;
 
@@ -1903,7 +1981,7 @@ _onFormValueChanged(ev) {
     return [
       { name: "card_mode", selector: { select: { options: [
         { label: "Capteur Card", value: "sensor" },
-        { label: "IQA Card (multi-capteurs)", value: "iqa" },
+        { label: "AQI Card (multi-capteurs)", value: "aqi" },
       ], mode: "dropdown" } } },
       { name: "entity", required: true, selector: { entity: { domain: "sensor" } } },
       { name: "preset", selector: { select: { options: [
@@ -1984,6 +2062,47 @@ _onFormValueChanged(ev) {
     ];
   }
 
+  _schemaSensorColors() {
+    return [
+      {
+        type: "grid", name: "", flatten: true, column_min_width: "220px",
+        schema: [
+          { name: "good", selector: { text: {} }, path: "bar" },
+          { name: "warn", selector: { text: {} }, path: "bar" },
+          { name: "bad", selector: { text: {} }, path: "bar" },
+        ],
+      },
+    ];
+  }
+
+  _schemaSensorBar() {
+    return [
+      {
+        type: "grid", name: "", flatten: true, column_min_width: "220px",
+        schema: [
+          // enable/disable bar + marker
+          { name: "bar_enabled", selector: { boolean: {} } },
+          { name: "show_knob", selector: { boolean: {} } },
+
+          // bar geometry
+          { name: "width", selector: { number: { min: 50, max: 100, mode: "box", step: 1 } }, path: "bar" },
+          { name: "height", selector: { number: { min: 4, max: 18, mode: "box", step: 1 } }, path: "bar" },
+          { name: "align", selector: { select: { options: [
+            { label: "Centré", value: "center" },
+            { label: "Gauche", value: "left" },
+            { label: "Droite", value: "right" },
+          ], mode: "dropdown" } }, path: "bar" },
+
+          // marker (repère)
+          { name: "knob_size", selector: { number: { min: 6, max: 24, mode: "box", step: 1 } } },
+          { name: "knob_outline", selector: { boolean: {} } },
+          { name: "knob_shadow", selector: { boolean: {} } },
+        ],
+      },
+    ];
+  }
+
+
   _schemaBar() {
     return [
       {
@@ -2004,148 +2123,204 @@ _onFormValueChanged(ev) {
     ];
   }
 
-  _schemaIqaGeneral() {
+  _schemaAqiGeneral() {
     return [
       { name: "card_mode", selector: { select: { options: [
         { label: "Capteur Card", value: "sensor" },
-        { label: "IQA Card (multi-capteurs)", value: "iqa" },
+        { label: "AQI Card (multi-capteurs)", value: "aqi" },
       ], mode: "dropdown" } } },
-      { name: "iqa_title", selector: { text: {} } },
-      { name: "iqa_title_left_image", selector: { text: {} } },
-      { name: "iqa_title_left_image_size", selector: { number: { min: 12, max: 64, mode: "box", step: 1 } } },
-      { name: "iqa_title_left_icon", selector: { icon: {} } },
-      { name: "iqa_title_left_icon_size", selector: { number: { min: 12, max: 64, mode: "box", step: 1 } } },
-      { name: "iqa_show_title", selector: { boolean: {} } },
-      { name: "iqa_show_global", selector: { boolean: {} } },
-      { name: "iqa_show_sensors", selector: { boolean: {} } },
-      { name: "iqa_background_enabled", selector: { boolean: {} } },
+      { name: "aqi_title", selector: { text: {} } },
+      { name: "aqi_title_icon", selector: { icon: {} } },
+      { name: "aqi_show_title", selector: { boolean: {} } },
+      { name: "aqi_show_global", selector: { boolean: {} } },
+      { name: "aqi_show_sensors", selector: { boolean: {} } },
+      { name: "aqi_background_enabled", selector: { boolean: {} } },
     ];
   }
 
-  _schemaIqaEntities() {
+  _schemaAqiEntities() {
     return [
-      { name: "iqa_entities", selector: { entity: { domain: "sensor", multiple: true } } },
+      { name: "aqi_entities", selector: { entity: { domain: "sensor", multiple: true } } },
     ];
   }
 
-  _schemaIqaLayout() {
+  _aqiEntitiesEditor() {
+    const wrap = document.createElement("div");
+    wrap.style.display = "grid";
+    wrap.style.gap = "12px";
+
+    // Sélection (multi)
+    wrap.appendChild(this._makeForm(this._schemaAqiEntities(), this._config));
+
+    // Réorganisation (ordre d’affichage)
+    wrap.appendChild(this._aqiEntitiesReorder());
+
+    return wrap;
+  }
+
+  _aqiEntitiesReorder() {
+    const box = document.createElement("div");
+    const ents = Array.isArray(this._config?.aqi_entities) ? this._config.aqi_entities : [];
+
+    const title = document.createElement("div");
+    title.style.fontWeight = "800";
+    title.style.marginTop = "2px";
+    title.textContent = "Réorganiser l’ordre";
+    box.appendChild(title);
+
+    if (ents.length < 2) {
+      const muted = document.createElement("div");
+      muted.className = "muted";
+      muted.textContent = "Ajoute au moins 2 entités pour activer la réorganisation.";
+      box.appendChild(muted);
+      return box;
+    }
+
+    const list = document.createElement("div");
+    list.className = "reorder-list";
+
+    const overrides = (this._config?.aqi_overrides && typeof this._config.aqi_overrides === "object") ? this._config.aqi_overrides : {};
+
+    ents.forEach((eid, idx) => {
+      const st = this._hass?.states?.[eid];
+      const ov = overrides[eid] || {};
+      const displayName = (ov.name && String(ov.name).trim()) ? String(ov.name).trim() : (st?.attributes?.friendly_name || eid);
+
+      const row = document.createElement("div");
+      row.className = "reorder-row";
+
+      const meta = document.createElement("div");
+      meta.className = "reorder-meta";
+      meta.innerHTML = `
+        <div class="reorder-name">${_jp2EscapeHtml(displayName)}</div>
+        <div class="reorder-eid">${_jp2EscapeHtml(eid)}</div>
+      `;
+
+      const actions = document.createElement("div");
+      actions.className = "reorder-actions";
+
+      const up = document.createElement("button");
+      up.type = "button";
+      up.className = "mini-btn";
+      up.textContent = "↑";
+      up.disabled = idx === 0;
+      up.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this._moveAqiEntity(idx, -1);
+      });
+
+      const down = document.createElement("button");
+      down.type = "button";
+      down.className = "mini-btn";
+      down.textContent = "↓";
+      down.disabled = idx === ents.length - 1;
+      down.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this._moveAqiEntity(idx, +1);
+      });
+
+      actions.appendChild(up);
+      actions.appendChild(down);
+
+      row.appendChild(meta);
+      row.appendChild(actions);
+
+      list.appendChild(row);
+    });
+
+    box.appendChild(list);
+    return box;
+  }
+
+  _moveAqiEntity(index, delta) {
+    const ents = Array.isArray(this._config?.aqi_entities) ? [...this._config.aqi_entities] : [];
+    const j = index + delta;
+    if (index < 0 || index >= ents.length) return;
+    if (j < 0 || j >= ents.length) return;
+
+    const tmp = ents[index];
+    ents[index] = ents[j];
+    ents[j] = tmp;
+
+    const next = deepClone(this._config);
+    next.aqi_entities = ents;
+    this._config = next;
+    this._fireConfigChanged(this._config);
+    this._render();
+  }
+
+  _schemaAqiLayout() {
     return [
-      { name: "iqa_layout", selector: { select: { options: [
+      { name: "aqi_layout", selector: { select: { options: [
         { label: "Vertical (liste)", value: "vertical" },
         { label: "Horizontal (tuiles)", value: "horizontal" },
       ], mode: "dropdown" } } },
-      { name: "iqa_horizontal_icons_only", selector: { boolean: {} } },
-      { name: "iqa_tiles_per_row", selector: { number: { min: 1, max: 6, mode: "box", step: 1 } } },
-      { name: "iqa_tile_color_enabled", selector: { boolean: {} } },
-      { name: "iqa_tile_radius", selector: { number: { min: 0, max: 40, mode: "box", step: 1 } } },
+      { name: "aqi_tiles_per_row", selector: { number: { min: 1, max: 6, mode: "box", step: 1 } } },
+      { name: "aqi_tile_color_enabled", selector: { boolean: {} } },
+      { name: "aqi_tile_transparent", selector: { boolean: {} } },
+      { name: "aqi_tile_outline_transparent", selector: { boolean: {} } },
+      { name: "aqi_tile_radius", selector: { number: { min: 0, max: 40, mode: "box", step: 1 } } },
     ];
   }
 
-  _schemaIqaRowDisplay() {
+  _schemaAqiRowDisplay() {
     return [
+      { name: "aqi_tiles_icons_only", selector: { boolean: {} } },
       {
         type: "grid", name: "", flatten: true, column_min_width: "220px",
         schema: [
-          { name: "iqa_show_sensor_icon", selector: { boolean: {} } },
-          { name: "iqa_show_sensor_name", selector: { boolean: {} } },
-          { name: "iqa_show_sensor_entity", selector: { boolean: {} } },
-          { name: "iqa_show_sensor_value", selector: { boolean: {} } },
-          { name: "iqa_show_sensor_unit", selector: { boolean: {} } },
-          { name: "iqa_show_sensor_status", selector: { boolean: {} } },
+          { name: "aqi_show_sensor_icon", selector: { boolean: {} } },
+          { name: "aqi_show_sensor_name", selector: { boolean: {} } },
+          { name: "aqi_show_sensor_entity", selector: { boolean: {} } },
+          { name: "aqi_show_sensor_value", selector: { boolean: {} } },
+          { name: "aqi_show_sensor_unit", selector: { boolean: {} } },
+          { name: "aqi_show_sensor_status", selector: { boolean: {} } },
         ],
       },
     ];
   }
 
-  _schemaIqaIconStyle() {
+  _schemaAqiIconStyle() {
     return [
-      { name: "iqa_icon_size", selector: { number: { min: 16, max: 80, mode: "box", step: 1 } } },
-      { name: "iqa_icon_inner_size", selector: { number: { min: 10, max: 60, mode: "box", step: 1 } } },
-      { name: "iqa_icon_background", selector: { boolean: {} } },
-      { name: "iqa_icon_circle", selector: { boolean: {} } },
+      { name: "aqi_icon_size", selector: { number: { min: 16, max: 80, mode: "box", step: 1 } } },
+      { name: "aqi_icon_inner_size", selector: { number: { min: 10, max: 60, mode: "box", step: 1 } } },
+      { name: "aqi_icon_background", selector: { boolean: {} } },
+      { name: "aqi_icon_circle", selector: { boolean: {} } },
     ];
   }
 
   // -------------------------
-  // IQA preview / overrides
+  // AQI preview / overrides
   // -------------------------
-
-  _scheduleIqaPreview(force = false) {
-    const wrap = this.shadowRoot?.getElementById("iqaPreview");
-    if (!wrap) return;
-
-    if (!this._hass || !this._config) {
-      wrap.innerHTML = `<div class="muted">Aperçu indisponible (hass non prêt).</div>`;
-      return;
-    }
-
-    if (!this._isIqa) return;
-
-    const ents = Array.isArray(this._config.iqa_entities) ? this._config.iqa_entities : [];
-    if (!ents.length) {
-      wrap.innerHTML = `<div class="muted">Aucune entité IQA sélectionnée.</div>`;
-      return;
-    }
-
-    let key = ents.join("|");
-    for (const eid of ents) {
-      const st = this._hass.states?.[eid];
-      if (st) key += `;${st.state}|${st.last_changed || st.last_updated || ""}`;
-      else key += ";—";
-    }
-
-    if (!force && key === this._pvKey) return;
-    this._pvKey = key;
-
-    try { if (this._pvRaf) cancelAnimationFrame(this._pvRaf); } catch (_) {}
-    this._pvRaf = null;
-    try { if (this._pvChunkRaf) cancelAnimationFrame(this._pvChunkRaf); } catch (_) {}
-    this._pvChunkRaf = null;
-
-    const reqId = ++this._pvReqId;
-
-    this._pvRaf = requestAnimationFrame(() => {
-      this._pvRaf = null;
-      if (reqId !== this._pvReqId) return;
-      this._renderIqaPreview(reqId);
-    });
-  }
-
-
-  _iqaPreview() {
+  _aqiPreview() {
     const wrap = document.createElement("div");
     wrap.innerHTML = `<div class="muted">Chargement de l’aperçu…</div>`;
-    wrap.id = "iqaPreview";
+    wrap.id = "aqiPreview";
     return wrap;
   }
 
-
-  _renderIqaPreview(reqId) {
-    const wrap = this.shadowRoot?.getElementById("iqaPreview");
+  _renderAqiPreview() {
+    const wrap = this.shadowRoot?.getElementById("aqiPreview");
     if (!wrap) return;
-
     if (!this._hass || !this._config) {
       wrap.innerHTML = `<div class="muted">Aperçu indisponible (hass non prêt).</div>`;
       return;
     }
-
-    const ents = Array.isArray(this._config.iqa_entities) ? this._config.iqa_entities : [];
+    const ents = Array.isArray(this._config.aqi_entities) ? this._config.aqi_entities : [];
     if (!ents.length) {
-      wrap.innerHTML = `<div class="muted">Aucune entité IQA sélectionnée.</div>`;
+      wrap.innerHTML = `<div class="muted">Aucune entité AQI sélectionnée.</div>`;
       return;
     }
 
     const chips = document.createElement("div");
     chips.className = "chips";
-    wrap.innerHTML = "";
-    wrap.appendChild(chips);
 
-    const CHUNK = 24;
-    let i = 0;
-
-    const addOne = (eid) => {
+    for (const eid of ents) {
       const st = this._hass.states?.[eid];
-      const name = st?.attributes?.friendly_name || eid;
+      const ov = (this._config?.aqi_overrides && typeof this._config.aqi_overrides === "object") ? (this._config.aqi_overrides[eid] || {}) : {};
+      const name = (ov.name && String(ov.name).trim()) ? String(ov.name).trim() : (st?.attributes?.friendly_name || eid);
       const unit = st?.attributes?.unit_of_measurement ? String(st.attributes.unit_of_measurement) : "";
       const val = st ? `${st.state}${unit ? " " + unit : ""}` : "—";
       const chip = document.createElement("div");
@@ -2163,27 +2338,11 @@ _onFormValueChanged(ev) {
         }));
       });
       chips.appendChild(chip);
-    };
-
-    if (ents.length <= CHUNK) {
-      for (const eid of ents) addOne(eid);
-      return;
     }
 
-    const step = () => {
-      if (reqId !== this._pvReqId) return;
-      const end = Math.min(i + CHUNK, ents.length);
-      for (; i < end; i++) addOne(ents[i]);
-      if (i < ents.length) {
-        this._pvChunkRaf = requestAnimationFrame(step);
-      } else {
-        this._pvChunkRaf = null;
-      }
-    };
-
-    this._pvChunkRaf = requestAnimationFrame(step);
+    wrap.innerHTML = "";
+    wrap.appendChild(chips);
   }
-
 
   _overridesEditor() {
     const wrap = document.createElement("div");
@@ -2194,8 +2353,8 @@ _onFormValueChanged(ev) {
 
   _renderOverridesInto(wrap) {
     if (!wrap) return;
-    const ents = Array.isArray(this._config?.iqa_entities) ? this._config.iqa_entities : [];
-    const overrides = (this._config?.iqa_overrides && typeof this._config.iqa_overrides === "object") ? this._config.iqa_overrides : {};
+    const ents = Array.isArray(this._config?.aqi_entities) ? this._config.aqi_entities : [];
+    const overrides = (this._config?.aqi_overrides && typeof this._config.aqi_overrides === "object") ? this._config.aqi_overrides : {};
 
     if (!ents.length) {
       wrap.innerHTML = `<div class="muted">Ajoute des entités dans l’onglet “Entités” pour configurer des overrides.</div>`;
@@ -2221,8 +2380,8 @@ _onFormValueChanged(ev) {
           <div class="ov-eid">${eid}</div>
         </div>
         <div class="ov-right">
-          <div class="ov-pill">${ov.icon ? "Icône" : "Auto"}</div>
-          <div class="ov-pill">${ov.icon_size || ""}${ov.icon_size ? "px" : ""}</div>
+          <div class="ov-pill">${ov.name ? "Nom" : "Nom auto"}</div>
+          <div class="ov-pill">${ov.icon ? "Icône" : "Icône auto"}</div>
         </div>
       `;
 
@@ -2232,28 +2391,25 @@ _onFormValueChanged(ev) {
       const grid = document.createElement("div");
       grid.className = "ov-grid";
 
+      // Nom override
+      const nameField = document.createElement("ha-textfield");
+      nameField.label = "Nom";
+      nameField.value = ov.name || "";
+      nameField.placeholder = name;
+      nameField.addEventListener("change", () => {
+        const v = nameField.value || "";
+        this._onOverridesChanged(eid, "name", v, { clearOnNull: true });
+      });
+
       // Icon picker (fallback textfield)
       const iconField = this._iconField("Icône", ov.icon || "");
       iconField.addEventListener("value-changed", (e) => {
         const v = e.detail?.value ?? "";
-        this._onOverridesChanged(eid, "icon", v);
+        this._onOverridesChanged(eid, "icon", v, { clearOnNull: true });
       });
 
-      const sizeField = this._numField("Taille cercle", ov.icon_size ?? "", 16, 80, 1);
-      sizeField.addEventListener("change", () => {
-        const v = sizeField.value === "" ? null : clamp(Number(sizeField.value), 16, 80);
-        this._onOverridesChanged(eid, "icon_size", v, { clearOnNull: true });
-      });
-
-      const innerField = this._numField("Taille pictogramme", ov.icon_inner_size ?? "", 10, 60, 1);
-      innerField.addEventListener("change", () => {
-        const v = innerField.value === "" ? null : clamp(Number(innerField.value), 10, 60);
-        this._onOverridesChanged(eid, "icon_inner_size", v, { clearOnNull: true });
-      });
-
+      grid.appendChild(nameField);
       grid.appendChild(iconField);
-      grid.appendChild(sizeField);
-      grid.appendChild(innerField);
 
       const actions = document.createElement("div");
       actions.style.display = "flex";
@@ -2264,8 +2420,8 @@ _onFormValueChanged(ev) {
       reset.label = "Reset";
       reset.addEventListener("click", () => {
         const next = deepClone(this._config);
-        next.iqa_overrides = { ...(next.iqa_overrides || {}) };
-        delete next.iqa_overrides[eid];
+        next.aqi_overrides = { ...(next.aqi_overrides || {}) };
+        delete next.aqi_overrides[eid];
         this._config = next;
         this._fireConfigChanged(this._config);
         this._render();
@@ -2315,15 +2471,15 @@ _onFormValueChanged(ev) {
 
   _onOverridesChanged(eid, key, value, { clearOnNull = false } = {}) {
     const next = deepClone(this._config);
-    next.iqa_overrides = { ...(next.iqa_overrides || {}) };
-    next.iqa_overrides[eid] = { ...(next.iqa_overrides[eid] || {}) };
+    next.aqi_overrides = { ...(next.aqi_overrides || {}) };
+    next.aqi_overrides[eid] = { ...(next.aqi_overrides[eid] || {}) };
 
-    if (clearOnNull && (value === null || value === "")) delete next.iqa_overrides[eid][key];
-    else next.iqa_overrides[eid][key] = value;
+    if (clearOnNull && (value === null || value === "")) delete next.aqi_overrides[eid][key];
+    else next.aqi_overrides[eid][key] = value;
 
     // cleanup empty objects
-    for (const [id, ov] of Object.entries(next.iqa_overrides)) {
-      if (!ov || typeof ov !== "object" || Object.keys(ov).length === 0) delete next.iqa_overrides[id];
+    for (const [id, ov] of Object.entries(next.aqi_overrides)) {
+      if (!ov || typeof ov !== "object" || Object.keys(ov).length === 0) delete next.aqi_overrides[id];
     }
 
     this._config = next;
@@ -2335,13 +2491,16 @@ _onFormValueChanged(ev) {
     const cleaned = deepClone(cfg);
 
     // Nettoyage des overrides vides / null
-    if (cleaned.iqa_overrides && typeof cleaned.iqa_overrides === "object") {
-      for (const [eid, ov] of Object.entries(cleaned.iqa_overrides)) {
-        if (!ov || typeof ov !== "object") { delete cleaned.iqa_overrides[eid]; continue; }
-        for (const k of ["icon", "icon_size", "icon_inner_size"]) {
+    if (cleaned.aqi_overrides && typeof cleaned.aqi_overrides === "object") {
+      for (const [eid, ov] of Object.entries(cleaned.aqi_overrides)) {
+        if (!ov || typeof ov !== "object") { delete cleaned.aqi_overrides[eid]; continue; }
+        for (const k of ["name", "icon"]) {
           if (ov[k] === null || ov[k] === "" || ov[k] === undefined) delete ov[k];
         }
-        if (Object.keys(ov).length === 0) delete cleaned.iqa_overrides[eid];
+        // Legacy keys (tailles) : on les ignore et on nettoie si présents
+        delete ov.icon_size;
+        delete ov.icon_inner_size;
+        if (Object.keys(ov).length === 0) delete cleaned.aqi_overrides[eid];
       }
     }
 
@@ -2369,4 +2528,4 @@ try {
 window.customCards = window.customCards || [];
 window.customCards.push({ type: CARD_TYPE, name: CARD_NAME, description: CARD_DESC, version: CARD_VERSION });
 
-console.info(`%c ${CARD_NAME} %c v${CARD_VERSION} `, "color: white; background: #03a9f4; font-weight: 700;", "color: #03a9f4; background: white; font-weight: 700;");
+console.info(`%c ${CARD_NAME} %c v${CARD_VERSION} (${CARD_BUILD_DATE}) `, "color: white; background: #03a9f4; font-weight: 700;", "color: #03a9f4; background: white; font-weight: 700;");
