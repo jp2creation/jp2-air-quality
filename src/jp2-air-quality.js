@@ -3,16 +3,17 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.0.0
+  Release notes — v2.0.3
   - Ref: refonte totale de l’éditeur visuel (UI fluide + navigation par onglets + aperçu IQA + overrides).
   - Ref: code restructuré (helpers centralisés, rendu éditeur sans reflow inutile).
   - Fix: optimisation IQA (clé de rendu basée sur last_changed, throttling rAF).
+  - Fix: correction d’un bloc de code erroné dans l’éditeur (Safari iOS / mobile).
 */
 
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + IQA multi-sensors) with internal history graph and a fluid visual editor (v2).";
-const CARD_VERSION = "2.0.0";
+const CARD_VERSION = "2.0.3";
 
 // -------------------------
 // Defaults / presets
@@ -222,6 +223,10 @@ class Jp2AirQualityCard extends HTMLElement {
 
       // IQA card
       iqa_title: "IQA",
+      iqa_title_left_image: "",
+      iqa_title_left_image_size: 22,
+      iqa_title_left_icon: "",
+      iqa_title_left_icon_size: 20,
       iqa_entities: [],
       iqa_show_title: true,
       iqa_show_global: true,
@@ -229,6 +234,7 @@ class Jp2AirQualityCard extends HTMLElement {
 
       iqa_background_enabled: false,
       iqa_layout: "vertical", // vertical | horizontal
+      iqa_horizontal_icons_only: false,
       // Horizontal tiles options
       iqa_tiles_per_row: 3,
       iqa_tile_color_enabled: false,
@@ -541,11 +547,20 @@ class Jp2AirQualityCard extends HTMLElement {
       height: "Hauteur (px)",
       align: "Alignement",
       iqa_title: "Titre IQA",
+      iqa_title_left_image: "Image à gauche du titre",
+      iqa_title_left_image_size: "Taille image titre (px)",
+      iqa_title_left_icon: "Icône à gauche du titre",
+      iqa_title_left_icon_size: "Taille icône titre (px)",
+      iqa_title_left_image: "Image à gauche du titre",
+      iqa_title_left_image_size: "Taille image titre (px)",
+      iqa_title_left_icon: "Icône à gauche du titre",
+      iqa_title_left_icon_size: "Taille icône titre (px)",
       iqa_entities: "Entités IQA",
       iqa_show_title: "Afficher le titre",
       iqa_show_global: "Afficher le statut global",
       iqa_show_sensors: "Afficher la liste des capteurs",
       iqa_background_enabled: "Fond coloré (IQA)",
+      iqa_horizontal_icons_only: "Horizontal : icônes uniquement",
     };
 
     const helperMap = {
@@ -794,7 +809,12 @@ class Jp2AirQualityCard extends HTMLElement {
         .iqa.show { display:block; }
         .iqa-head { display:flex; align-items:baseline; justify-content:space-between; gap: 10px; }
         .iqa-title { font-weight: 800; }
-        .iqa-global { font-weight: 700; opacity:.85; display:flex; gap:8px; align-items:center; }
+        
+        .iqa-title.with-prefix { display:flex; align-items:center; gap: 10px; }
+        .iqa-title-left { display:inline-flex; align-items:center; gap: 8px; }
+        .iqa-title-img { display:block; }
+        .iqa-title-ico { display:block; }
+.iqa-global { font-weight: 700; opacity:.85; display:flex; gap:8px; align-items:center; }
         .dot { width:10px; height:10px; border-radius:999px; background: var(--jp2-status-color); box-shadow: 0 0 0 1px rgba(255,255,255,.9), 0 0 0 2px rgba(0,0,0,.20); }
 
         .iqa-list { display:flex; flex-direction:column; gap: 8px; margin-top: 8px; }
@@ -1179,8 +1199,41 @@ class Jp2AirQualityCard extends HTMLElement {
 
     this._setCardBackground(globalColor, !!c.iqa_background_enabled);
 
+
+
+    const titleText = c.iqa_title || "IQA";
+    const titleLeftImage = String(c.iqa_title_left_image || "").trim();
+    const titleLeftIcon = String(c.iqa_title_left_icon || "").trim();
+    const titleImgSize = clamp(toNum(c.iqa_title_left_image_size) ?? 22, 12, 64);
+    const titleIconSize = clamp(toNum(c.iqa_title_left_icon_size) ?? 20, 12, 64);
+
+    const titleKids = [];
+    if (titleLeftImage || titleLeftIcon) {
+      const leftKids = [];
+      if (titleLeftImage) {
+        leftKids.push(el("img", {
+          class: "iqa-title-img",
+          src: titleLeftImage,
+          alt: "",
+          style: { width: `${titleImgSize}px`, height: `${titleImgSize}px`, objectFit: "contain" }
+        }, []));
+      }
+      if (titleLeftIcon) {
+        leftKids.push(el("ha-icon", {
+          class: "iqa-title-ico",
+          icon: titleLeftIcon,
+          style: { "--mdc-icon-size": `${titleIconSize}px`, "--ha-icon-size": `${titleIconSize}px`, width: `${titleIconSize}px`, height: `${titleIconSize}px` }
+        }, []));
+      }
+      titleKids.push(el("span", { class: "iqa-title-left" }, leftKids));
+    }
+    titleKids.push(el("span", { class: "iqa-title-text" }, [titleText]));
+
+    const titleEl = el("div", { class: `iqa-title${(titleLeftImage || titleLeftIcon) ? " with-prefix" : ""}` }, titleKids);
+
+
     const head = el("div", { class: "iqa-head" }, [
-      c.iqa_show_title === false ? null : el("div", { class: "iqa-title" }, [c.iqa_title || "IQA"]),
+      c.iqa_show_title === false ? null : titleEl,
       c.iqa_show_global === false ? null : el("div", { class: "iqa-global" }, [
         el("span", { class: "dot", style: { background: globalColor } }),
         el("span", {}, [globalLabel]),
@@ -1188,6 +1241,7 @@ class Jp2AirQualityCard extends HTMLElement {
     ]);
 
     const layout = String(c.iqa_layout || "vertical");
+    const iconsOnly = (layout === "horizontal") && !!c.iqa_horizontal_icons_only;
     const showIconBg = c.iqa_icon_background !== false;
     const showIconCircle = c.iqa_icon_circle !== false;
 
@@ -1301,10 +1355,27 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     this._tab = "general";
     this._raf = null;
 
+    // Preview IQA (throttle / chunk)
+    this._pvReqId = 0;
+    this._pvRaf = null;
+    this._pvChunkRaf = null;
+    this._pvKey = "";
+
     this._onTabClick = this._onTabClick.bind(this);
     this._onFormValueChanged = this._onFormValueChanged.bind(this);
     this._onOverridesChanged = this._onOverridesChanged.bind(this);
   }
+  disconnectedCallback() {
+    try { if (this._raf) cancelAnimationFrame(this._raf); } catch (_) {}
+    this._raf = null;
+    try { if (this._pvRaf) cancelAnimationFrame(this._pvRaf); } catch (_) {}
+    this._pvRaf = null;
+    try { if (this._pvChunkRaf) cancelAnimationFrame(this._pvChunkRaf); } catch (_) {}
+    this._pvChunkRaf = null;
+    this._pvReqId = (this._pvReqId || 0) + 1;
+  }
+
+
 
   set hass(hass) {
     this._hass = hass;
@@ -1312,7 +1383,7 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     for (const f of Array.from(this.shadowRoot?.querySelectorAll("ha-form") || [])) {
       try { f.hass = hass; } catch (_) {}
     }
-    this._renderIqaPreview();
+    this._scheduleIqaPreview();
   }
 
   setConfig(config) {
@@ -1526,7 +1597,7 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     }
 
     // Refresh preview if present
-    this._renderIqaPreview();
+    this._scheduleIqaPreview();
   }
 
   _buildTabs() {
@@ -1548,7 +1619,8 @@ class Jp2AirQualityCardEditor extends HTMLElement {
   }
 
   _onTabClick(ev) {
-    const btn = ev.composedPath?.().find((n) => n && n.dataset && n.dataset.tab);
+    const path = (ev && typeof ev.composedPath === "function") ? ev.composedPath() : (ev && ev.path) ? ev.path : [];
+    const btn = (path && path.find((n) => n && n.dataset && n.dataset.tab)) || (ev?.target?.closest ? ev.target.closest("[data-tab]") : null);
     if (!btn) return;
     const next = btn.dataset.tab;
     if (!next || next === this._tab) return;
@@ -1939,6 +2011,10 @@ _onFormValueChanged(ev) {
         { label: "IQA Card (multi-capteurs)", value: "iqa" },
       ], mode: "dropdown" } } },
       { name: "iqa_title", selector: { text: {} } },
+      { name: "iqa_title_left_image", selector: { text: {} } },
+      { name: "iqa_title_left_image_size", selector: { number: { min: 12, max: 64, mode: "box", step: 1 } } },
+      { name: "iqa_title_left_icon", selector: { icon: {} } },
+      { name: "iqa_title_left_icon_size", selector: { number: { min: 12, max: 64, mode: "box", step: 1 } } },
       { name: "iqa_show_title", selector: { boolean: {} } },
       { name: "iqa_show_global", selector: { boolean: {} } },
       { name: "iqa_show_sensors", selector: { boolean: {} } },
@@ -1958,6 +2034,7 @@ _onFormValueChanged(ev) {
         { label: "Vertical (liste)", value: "vertical" },
         { label: "Horizontal (tuiles)", value: "horizontal" },
       ], mode: "dropdown" } } },
+      { name: "iqa_horizontal_icons_only", selector: { boolean: {} } },
       { name: "iqa_tiles_per_row", selector: { number: { min: 1, max: 6, mode: "box", step: 1 } } },
       { name: "iqa_tile_color_enabled", selector: { boolean: {} } },
       { name: "iqa_tile_radius", selector: { number: { min: 0, max: 40, mode: "box", step: 1 } } },
@@ -1992,6 +2069,49 @@ _onFormValueChanged(ev) {
   // -------------------------
   // IQA preview / overrides
   // -------------------------
+
+  _scheduleIqaPreview(force = false) {
+    const wrap = this.shadowRoot?.getElementById("iqaPreview");
+    if (!wrap) return;
+
+    if (!this._hass || !this._config) {
+      wrap.innerHTML = `<div class="muted">Aperçu indisponible (hass non prêt).</div>`;
+      return;
+    }
+
+    if (!this._isIqa) return;
+
+    const ents = Array.isArray(this._config.iqa_entities) ? this._config.iqa_entities : [];
+    if (!ents.length) {
+      wrap.innerHTML = `<div class="muted">Aucune entité IQA sélectionnée.</div>`;
+      return;
+    }
+
+    let key = ents.join("|");
+    for (const eid of ents) {
+      const st = this._hass.states?.[eid];
+      if (st) key += `;${st.state}|${st.last_changed || st.last_updated || ""}`;
+      else key += ";—";
+    }
+
+    if (!force && key === this._pvKey) return;
+    this._pvKey = key;
+
+    try { if (this._pvRaf) cancelAnimationFrame(this._pvRaf); } catch (_) {}
+    this._pvRaf = null;
+    try { if (this._pvChunkRaf) cancelAnimationFrame(this._pvChunkRaf); } catch (_) {}
+    this._pvChunkRaf = null;
+
+    const reqId = ++this._pvReqId;
+
+    this._pvRaf = requestAnimationFrame(() => {
+      this._pvRaf = null;
+      if (reqId !== this._pvReqId) return;
+      this._renderIqaPreview(reqId);
+    });
+  }
+
+
   _iqaPreview() {
     const wrap = document.createElement("div");
     wrap.innerHTML = `<div class="muted">Chargement de l’aperçu…</div>`;
@@ -1999,13 +2119,16 @@ _onFormValueChanged(ev) {
     return wrap;
   }
 
-  _renderIqaPreview() {
+
+  _renderIqaPreview(reqId) {
     const wrap = this.shadowRoot?.getElementById("iqaPreview");
     if (!wrap) return;
+
     if (!this._hass || !this._config) {
       wrap.innerHTML = `<div class="muted">Aperçu indisponible (hass non prêt).</div>`;
       return;
     }
+
     const ents = Array.isArray(this._config.iqa_entities) ? this._config.iqa_entities : [];
     if (!ents.length) {
       wrap.innerHTML = `<div class="muted">Aucune entité IQA sélectionnée.</div>`;
@@ -2014,8 +2137,13 @@ _onFormValueChanged(ev) {
 
     const chips = document.createElement("div");
     chips.className = "chips";
+    wrap.innerHTML = "";
+    wrap.appendChild(chips);
 
-    for (const eid of ents) {
+    const CHUNK = 24;
+    let i = 0;
+
+    const addOne = (eid) => {
       const st = this._hass.states?.[eid];
       const name = st?.attributes?.friendly_name || eid;
       const unit = st?.attributes?.unit_of_measurement ? String(st.attributes.unit_of_measurement) : "";
@@ -2035,11 +2163,27 @@ _onFormValueChanged(ev) {
         }));
       });
       chips.appendChild(chip);
+    };
+
+    if (ents.length <= CHUNK) {
+      for (const eid of ents) addOne(eid);
+      return;
     }
 
-    wrap.innerHTML = "";
-    wrap.appendChild(chips);
+    const step = () => {
+      if (reqId !== this._pvReqId) return;
+      const end = Math.min(i + CHUNK, ents.length);
+      for (; i < end; i++) addOne(ents[i]);
+      if (i < ents.length) {
+        this._pvChunkRaf = requestAnimationFrame(step);
+      } else {
+        this._pvChunkRaf = null;
+      }
+    };
+
+    this._pvChunkRaf = requestAnimationFrame(step);
   }
+
 
   _overridesEditor() {
     const wrap = document.createElement("div");
