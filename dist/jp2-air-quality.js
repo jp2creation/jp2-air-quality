@@ -1,9 +1,8 @@
-
 /*
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.0.3.8
+  Release notes — v2.0.4.0
   - Chore: bump version (import de la base) pour itérations rapides.
   - Ref: renommage complet du mode multi-capteurs en "AQI" (configs, UI, méthodes).
   - Fix: éditeur visuel — plus de clés `bar.*` au niveau racine (sync YAML ↔ UI)
@@ -17,12 +16,16 @@
   - Feat: AQI — option “Fond transparent par tuile”.
   - Feat: AQI — icône à gauche du titre (optionnel).
   - Feat: AQI — option “Contour transparent par tuile”.
-  - Feat: AQI — option “Tuiles (horizontal) : icônes seulement”.*/
+  - Feat: AQI — option “Tuiles (horizontal) : icônes seulement”.
+  - Feat: barre colorée — couleur du repère (thème ou statut).
+  - Feat: barre colorée — taille du contour du repère (épaisseur).
+  - Feat: AQI — option “Air uniquement” (statut global ignore temp/humidité/pression).
+  - Fix: AQI — détection preset améliorée (température/humidité/pression).*/
 
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph and a fluid visual editor (v2).";
-const CARD_VERSION = "2.0.3.8";
+const CARD_VERSION = "2.0.4.0";
 
 
 const CARD_BUILD_DATE = "2026-02-14";
@@ -328,6 +331,10 @@ class Jp2AirQualityCard extends HTMLElement {
       knob_outline: true,
       knob_shadow: true,
 
+
+      // marker color/outline
+      knob_color_mode: "theme", // theme | status
+      knob_outline_size: 2,
       // icon (sensor)
       icon_size: 40,
       icon_inner_size: 22,
@@ -370,6 +377,9 @@ class Jp2AirQualityCard extends HTMLElement {
       aqi_show_title: true,
       aqi_show_global: true,
       aqi_show_sensors: true,
+
+      // AQI global
+      aqi_air_only: false, // si true : le statut global ignore temp/humidité/pression etc.
 
       aqi_background_enabled: false,
       aqi_layout: "vertical", // vertical | horizontal
@@ -500,7 +510,12 @@ class Jp2AirQualityCard extends HTMLElement {
             schema: [
               { name: "knob_size", selector: { number: { min: 6, max: 28, mode: "box", step: 1 } } },
               { name: "knob_outline", selector: { boolean: {} } },
-              { name: "knob_shadow", selector: { boolean: {} } },
+          { name: "knob_outline_size", selector: { number: { min: 0, max: 10, mode: "box", step: 1 } } },
+          { name: "knob_color_mode", selector: { select: { options: [
+            { label: "Couleur thème", value: "theme" },
+            { label: "Couleur statut", value: "status" },
+          ], mode: "dropdown" } } },
+          { name: "knob_shadow", selector: { boolean: {} } },
             ],
           },
         ],
@@ -628,6 +643,7 @@ class Jp2AirQualityCard extends HTMLElement {
             schema: [
               { name: "aqi_show_title", selector: { boolean: {} } },
               { name: "aqi_show_global", selector: { boolean: {} } },
+              { name: "aqi_air_only", selector: { boolean: {} } },
               { name: "aqi_show_sensors", selector: { boolean: {} } },
               { name: "aqi_background_enabled", selector: { boolean: {} } },
             ],
@@ -702,12 +718,16 @@ class Jp2AirQualityCard extends HTMLElement {
       width: "Largeur (%)",
       height: "Hauteur (px)",
       align: "Alignement",
+      opacity: "Opacité (%)",
+      knob_outline_size: "Taille contour repère (px)",
+      knob_color_mode: "Couleur repère",
       opacity: "Opacité barre (%)",
       aqi_title: "Titre AQI",
       aqi_title_icon: "Icône du titre (AQI)",
       aqi_entities: "Entités AQI",
       aqi_show_title: "Afficher le titre",
       aqi_show_global: "Afficher le statut global",
+      aqi_air_only: "Air uniquement",
       aqi_show_sensors: "Afficher la liste des capteurs",
       aqi_background_enabled: "Fond coloré (AQI)",
     };
@@ -715,6 +735,7 @@ class Jp2AirQualityCard extends HTMLElement {
     const helperMap = {
       aqi_entities: "Ajoute plusieurs capteurs (CO₂, VOC/TVOC, PM2.5, Radon...). Un statut Bon/Moyen/Mauvais est calculé pour chacun.",
       aqi_title_icon: "Optionnel : une icône affichée à gauche du titre en mode AQI.",
+      aqi_air_only: "Si activé, le statut global ignore température/humidité/pression et ne considère que CO₂/VOC/PM/Radon.",
       graph_color: "Ex: var(--primary-color) ou #00bcd4. Vide = couleur du thème.",
       graph_warn_color: "Vide = couleur orange de la barre.",
       graph_bad_color: "Vide = couleur rouge de la barre.",
@@ -752,6 +773,7 @@ class Jp2AirQualityCard extends HTMLElement {
 
 
     merged.aqi_title_icon = String(merged.aqi_title_icon || "");
+    merged.aqi_air_only = !!merged.aqi_air_only;
     merged.aqi_tile_transparent = !!merged.aqi_tile_transparent;
     merged.aqi_entities = Array.isArray(merged.aqi_entities) ? merged.aqi_entities : [];
     merged.aqi_overrides = merged.aqi_overrides && typeof merged.aqi_overrides === "object" ? merged.aqi_overrides : {};
@@ -840,6 +862,7 @@ class Jp2AirQualityCard extends HTMLElement {
       String(!!c?.aqi_tile_outline_transparent),
       String(!!c?.aqi_show_sensors),
       String(!!c?.aqi_show_global),
+      String(!!c?.aqi_air_only),
       String(!!c?.aqi_show_title),
       String(c?.aqi_title_icon || ""),
       String(!!c?.aqi_show_sensor_icon),
@@ -915,14 +938,49 @@ class Jp2AirQualityCard extends HTMLElement {
 
   _detectPreset(entityId, stateObj) {
     const id = String(entityId || "").toLowerCase();
-    const unit = String(stateObj?.attributes?.unit_of_measurement || "").toLowerCase();
+    const unitRaw = String(stateObj?.attributes?.unit_of_measurement || "").toLowerCase();
+    const unit = unitRaw.replace(/\s/g, "");
     const dc = String(stateObj?.attributes?.device_class || "").toLowerCase();
+
+    // Température
+    if (
+      dc.includes("temperature") ||
+      unit === "°c" || unit === "°f" ||
+      id.includes("temp") || id.includes("temperature")
+    ) return "temperature";
+
+    // Humidité
+    if (
+      dc.includes("humidity") ||
+      unit === "%" ||
+      id.includes("humid") || id.includes("humidity")
+    ) return "humidity";
+
+    // Pression
+    if (
+      dc.includes("pressure") ||
+      unit.includes("hpa") || unit.includes("mbar") ||
+      unit.endsWith("pa") ||
+      id.includes("press") || id.includes("pression") || id.includes("pressure")
+    ) return "pressure";
+
+    // CO2
     if (dc.includes("carbon_dioxide") || id.includes("co2") || unit === "ppm") return "co2";
+
+    // VOC / TVOC
     if (dc.includes("volatile") || id.includes("tvoc") || id.includes("voc") || unit === "ppb") return "voc";
+
+    // PM
     if (id.includes("pm2") || id.includes("pm25") || id.includes("pm_2_5")) return "pm25";
     if (id.includes("pm1")) return "pm1";
+
+    // Radon
     if (id.includes("radon") || unit.includes("bq")) return "radon";
+
+    // Fallback particules si unité µg/m³
     if (unit.includes("µg") || unit.includes("ug")) return "pm25";
+
+    // Fallback final
     return "co2";
   }
 
@@ -982,8 +1040,8 @@ class Jp2AirQualityCard extends HTMLElement {
         .bar-inner .seg.warn { background: var(--jp2-warn); }
         .bar-inner .seg.bad { background: var(--jp2-bad); }
 
-        .knob { position:absolute; top: 50%; transform: translate(-50%, -50%); z-index: 2; width: var(--jp2-knob-size, 12px); height: var(--jp2-knob-size, 12px); border-radius:999px; background: var(--jp2-status-color, var(--primary-color)); }
-        .knob.outline { box-shadow: 0 0 0 2px rgba(255,255,255,.95), 0 0 0 3px rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.35); }
+        .knob { position:absolute; top: 50%; transform: translate(-50%, -50%); z-index: 2; width: var(--jp2-knob-size, 12px); height: var(--jp2-knob-size, 12px); border-radius:999px; background: var(--jp2-knob-color, var(--primary-color)); }
+        .knob.outline { --_o: var(--jp2-knob-outline-size, 2px); box-shadow: 0 0 0 var(--_o) rgba(255,255,255,.95), 0 0 0 calc(var(--_o) + 1px) rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.35); }
         .knob.shadow { filter: drop-shadow(0 1px 1px rgba(0,0,0,.35)); }
 
         .graph { display:none; }
@@ -1104,6 +1162,7 @@ class Jp2AirQualityCard extends HTMLElement {
         setOrClear("--jp2-aqi-status-weight", aqiStatusWeight ? String(aqiStatusWeight) : 0);
 
         card.style.setProperty("--jp2-knob-size", `${c.knob_size}px`);
+        card.style.setProperty("--jp2-knob-outline-size", `${clamp(Number(c.knob_outline_size ?? 2), 0, 10)}px`);
         card.style.setProperty("--jp2-graph-height", `${c.graph_height}px`);
 
         card.style.setProperty("--jp2-aqi-cols", String(clamp(Number(c.aqi_tiles_per_row || 3), 1, 6)));
@@ -1147,6 +1206,16 @@ class Jp2AirQualityCard extends HTMLElement {
     const unit = stateObj.attributes?.unit_of_measurement || this._presetConfig(preset).unit_fallback || "";
     const st = this._statusFor(preset, value);
     const statusColor = st.color;
+
+    // Expose status color to the whole card (bar/repère included)
+    const cardEl = this.shadowRoot && this.shadowRoot.querySelector ? this.shadowRoot.querySelector("ha-card") : null;
+    if (cardEl) {
+      cardEl.style.setProperty("--jp2-status-color", statusColor);
+      cardEl.style.setProperty("--jp2-status-outline", cssColorMix(statusColor, 35));
+      const mode = String(c.knob_color_mode || "theme").toLowerCase();
+      if (mode === "status" || mode === "statut") cardEl.style.setProperty("--jp2-knob-color", statusColor);
+      else cardEl.style.setProperty("--jp2-knob-color", "var(--primary-color)");
+    }
 
     this._setCardBackground(statusColor, !!c.background_enabled);
 
@@ -1208,7 +1277,7 @@ class Jp2AirQualityCard extends HTMLElement {
       ]);
       bar.appendChild(inner);
 
-if (c.show_knob !== false && value !== null) {
+      if (c.show_knob !== false && value !== null) {
         const knob = el("div", { class: `knob ${c.knob_outline ? "outline" : ""} ${c.knob_shadow ? "shadow" : ""}` });
         const pct = (st.ratio * 100);
         knob.style.left = `${pct.toFixed(2)}%`;
@@ -1391,8 +1460,16 @@ if (c.show_knob !== false && value !== null) {
     aqi.classList.toggle("show", true);
 
     const rows = [];
-    let globalLevel = "good";
-    const levelRank = { good: 0, warn: 1, bad: 2, unknown: -1 };
+
+    // Statut global = le capteur le "pire" (rank + ratio),
+    // avec label/couleur du preset du capteur limitant.
+    // Option "Air uniquement" : ignore temperature/humidity/pressure, etc.
+    const levelRank = { unknown: -1, good: 0, warn: 1, bad: 2 };
+    const airOnly = !!c.aqi_air_only;
+    const AIR_PRESETS = new Set(["co2", "voc", "pm1", "pm25", "radon"]);
+
+    let worst = null;       // { eid, name, preset, status }
+    let worstScore = -9999; // score croissant = plus "mauvais"
 
     for (const eid of entities) {
       const stObj = this._hass?.states?.[eid];
@@ -1402,13 +1479,12 @@ if (c.show_knob !== false && value !== null) {
       const unit = stObj.attributes?.unit_of_measurement || this._presetConfig(preset).unit_fallback || "";
       const st = this._statusFor(preset, value);
 
-      if (levelRank[st.level] > levelRank[globalLevel]) globalLevel = st.level;
-
       const ov = c.aqi_overrides && typeof c.aqi_overrides === "object" ? c.aqi_overrides[eid] || {} : {};
       const icon = ov.icon || DEFAULT_ICON_BY_PRESET[preset] || "mdi:information";
       const iconSize = clamp(Number(c.aqi_icon_size), 16, 80);
       const innerSize = clamp(Number(c.aqi_icon_inner_size), 10, 60);
       const name = (ov.name && String(ov.name).trim()) ? String(ov.name).trim() : (stObj.attributes?.friendly_name || eid);
+
       rows.push({
         eid,
         name,
@@ -1420,12 +1496,27 @@ if (c.show_knob !== false && value !== null) {
         iconSize,
         innerSize,
       });
+
+      // Sélection du capteur "limitant" pour le global
+      const considerForGlobal = (!airOnly) || AIR_PRESETS.has(String(preset));
+      if (considerForGlobal) {
+        const rank = (levelRank[st.level] ?? -1);
+        const ratio = isNum(st.ratio) ? st.ratio : 0;
+        const score = (rank < 0) ? -9999 : (rank * 1000 + Math.round(ratio * 999));
+        if (score > worstScore) {
+          worstScore = score;
+          worst = { eid, name, preset, status: st };
+        }
+      }
     }
 
-    const globalLabel = globalLevel === "warn" ? "Moyen" : globalLevel === "bad" ? "Mauvais" : "Bon";
-    const globalColor = globalLevel === "warn" ? this._colors().warn : globalLevel === "bad" ? this._colors().bad : this._colors().good;
+    const globalLevel = worst?.status?.level || "unknown";
+    const globalLabel = worst?.status?.label || "—";
+    const globalColor = worst?.status?.color || "var(--secondary-text-color)";
 
-    this._setCardBackground(globalColor, !!c.aqi_background_enabled);
+    // Fond AQI seulement si on a un vrai statut
+    const bgEnabled = !!c.aqi_background_enabled && globalLevel !== "unknown";
+    this._setCardBackground(globalColor, bgEnabled);
 
 
     const titleEl = (c.aqi_show_title === false) ? null : (() => {
@@ -1595,6 +1686,7 @@ class Jp2AirQualityCardEditor extends HTMLElement {
 
       merged.aqi_entities = Array.isArray(merged.aqi_entities) ? merged.aqi_entities : [];
       merged.aqi_overrides = merged.aqi_overrides && typeof merged.aqi_overrides === "object" ? merged.aqi_overrides : {};
+      merged.aqi_air_only = !!merged.aqi_air_only;
 
       // Fix: clean any legacy dotted keys like "bar.width" from YAML
       jp2NormalizeDottedRootKeys(merged, ["bar"]);
@@ -2053,6 +2145,8 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       knob_size: "Taille repère (px)",
       knob_outline: "Contour repère",
       knob_shadow: "Ombre repère",
+      knob_outline_size: "Taille contour repère (px)",
+      knob_color_mode: "Couleur repère",
       icon_size: "Taille icône (px)",
       icon_inner_size: "Taille pictogramme (px)",
       icon_background: "Fond icône",
@@ -2080,11 +2174,13 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       width: "Largeur (%)",
       height: "Hauteur (px)",
       align: "Alignement",
+      opacity: "Opacité barre (%)",
       // AQI general
       aqi_title: "Titre",
       aqi_title_icon: "Icône du titre",
       aqi_show_title: "Afficher le titre",
       aqi_show_global: "Afficher le statut global",
+      aqi_air_only: "Air uniquement",
       aqi_show_sensors: "Afficher les capteurs",
       aqi_background_enabled: "Fond coloré",
       // AQI entities / layout
@@ -2132,10 +2228,13 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       warn: "Couleur du statut “Moyen”.",
       bad: "Couleur du statut “Mauvais”.",
       opacity: "Opacité de la barre en % (100 = opaque, 0 = invisible).",
+      knob_color_mode: "Couleur du repère : thème (couleur principale) ou statut (bon/moyen/mauvais).",
+      knob_outline_size: "Épaisseur du contour du repère (si \"Contour repère\" est activé).",
       aqi_entities: "Tu peux sélectionner plusieurs entités.",
+      aqi_title_icon: "Optionnel : icône affichée à gauche du titre en mode AQI.",
+      aqi_air_only: "Si activé, le statut global ignore température / humidité / pression. Seuls CO₂, VOC/TVOC, PM1/PM2.5 et Radon comptent.",
       aqi_tile_transparent: "Si activé, supprime le fond gris des tuiles (bordure uniquement).",
       aqi_tile_outline_transparent: "Si activé, supprime aussi la bordure des tuiles (aucun contour).",
-      aqi_title_icon: "Optionnel : icône affichée à gauche du titre en mode AQI.",
       aqi_tiles_icons_only: "Uniquement en disposition horizontale : n’affiche que l’icône de chaque capteur.",
       aqi_text_name_size: "0 = auto (taille par défaut).",
       aqi_text_name_weight: "0 = auto. Valeurs usuelles : 400 / 600 / 700 / 800 / 900.",
@@ -2149,7 +2248,7 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     return map[n] || map[key] || "";
   }
 
-_onFormValueChanged(ev) {
+  _onFormValueChanged(ev) {
     if (!this._config) return;
     const prev = this._config;
     const value = ev.detail?.value || {};
@@ -2175,6 +2274,7 @@ _onFormValueChanged(ev) {
 
 
     next.aqi_title_icon = String(next.aqi_title_icon || "");
+    next.aqi_air_only = !!next.aqi_air_only;
     next.aqi_tile_transparent = !!next.aqi_tile_transparent;
     next.aqi_tile_outline_transparent = !!next.aqi_tile_outline_transparent;
     next.aqi_tiles_icons_only = !!next.aqi_tiles_icons_only;
@@ -2242,6 +2342,11 @@ _onFormValueChanged(ev) {
           { name: "show_knob", selector: { boolean: {} } },
           { name: "knob_size", selector: { number: { min: 6, max: 24, mode: "box", step: 1 } } },
           { name: "knob_outline", selector: { boolean: {} } },
+          { name: "knob_outline_size", selector: { number: { min: 0, max: 10, mode: "box", step: 1 } } },
+          { name: "knob_color_mode", selector: { select: { options: [
+            { label: "Couleur thème", value: "theme" },
+            { label: "Couleur statut", value: "status" },
+          ], mode: "dropdown" } } },
           { name: "knob_shadow", selector: { boolean: {} } },
           { name: "icon_size", selector: { number: { min: 16, max: 80, mode: "box", step: 1 } } },
           { name: "icon_inner_size", selector: { number: { min: 10, max: 60, mode: "box", step: 1 } } },
@@ -2320,6 +2425,11 @@ _onFormValueChanged(ev) {
           // marker (repère)
           { name: "knob_size", selector: { number: { min: 6, max: 24, mode: "box", step: 1 } } },
           { name: "knob_outline", selector: { boolean: {} } },
+          { name: "knob_outline_size", selector: { number: { min: 0, max: 10, mode: "box", step: 1 } } },
+          { name: "knob_color_mode", selector: { select: { options: [
+            { label: "Couleur thème", value: "theme" },
+            { label: "Couleur statut", value: "status" },
+          ], mode: "dropdown" } } },
           { name: "knob_shadow", selector: { boolean: {} } },
         ],
       },
@@ -2358,6 +2468,7 @@ _onFormValueChanged(ev) {
       { name: "aqi_title_icon", selector: { icon: {} } },
       { name: "aqi_show_title", selector: { boolean: {} } },
       { name: "aqi_show_global", selector: { boolean: {} } },
+      { name: "aqi_air_only", selector: { boolean: {} } },
       { name: "aqi_show_sensors", selector: { boolean: {} } },
       { name: "aqi_background_enabled", selector: { boolean: {} } },
     ];
