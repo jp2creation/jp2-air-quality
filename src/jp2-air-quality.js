@@ -3,6 +3,8 @@
   File name must remain: jp2-air-quality.js
 
   Release notes — v2.0.4.1
+  - Fix: presets — seuils corrigés (radon + profils en plage pour température/humidité/pression).
+  - Fix: repère — mode \"Couleur statut\" robuste (valeurs legacy + bar.knob_color_mode).
   - Chore: bump version (import de la base) pour itérations rapides.
   - Ref: renommage complet du mode multi-capteurs en "AQI" (configs, UI, méthodes).
   - Fix: éditeur visuel — plus de clés `bar.*` au niveau racine (sync YAML ↔ UI)
@@ -19,7 +21,6 @@
   - Feat: AQI — option “Tuiles (horizontal) : icônes seulement”.
   - Feat: barre colorée — couleur du repère (thème ou statut).
   - Feat: barre colorée — taille du contour du repère (épaisseur).
-  - Fix: barre colorée — mode "Couleur statut" : prise en charge des valeurs legacy (ex: "Couleur statut") + lecture compat `bar.knob_color_mode`.
   - Feat: AQI — option “Air uniquement” (statut global ignore temp/humidité/pression).
   - Fix: AQI — détection preset améliorée (température/humidité/pression).*/
 
@@ -69,33 +70,44 @@ function toNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-// Normalize knob color mode to a stable internal value ("theme" | "status").
-// Accepts legacy human labels (FR/EN) and legacy location under bar.knob_color_mode.
-function normalizeKnobColorMode(mode, legacyMode) {
-  const pick = (v) => String(v ?? "").trim().toLowerCase();
-  const a = pick(mode);
-  const b = pick(legacyMode);
+function normalizeKnobColorMode(cfg) {
+  // Accept both new + legacy placements/values:
+  // - cfg.knob_color_mode (preferred)
+  // - cfg.bar.knob_color_mode (legacy)
+  // Values accepted:
+  // - "status", "statut", "couleur statut", "status_color" => "status"
+  // - "theme", "thème", "couleur theme" => "theme"
+  const raw =
+    (cfg && cfg.knob_color_mode != null) ? cfg.knob_color_mode :
+    (cfg && cfg.bar && cfg.bar.knob_color_mode != null) ? cfg.bar.knob_color_mode :
+    "theme";
 
-  const isStatus = (s) =>
-    s === "status" || s === "statut" ||
-    s.includes("status") || s.includes("statut") ||
-    (s.includes("couleur") && (s.includes("statut") || s.includes("status"))) ||
-    s.includes("state color") || s.includes("status color");
+  const v = String(raw).trim().toLowerCase();
 
-  const isTheme = (s) =>
-    s === "theme" || s === "thème" ||
-    s.includes("theme") || s.includes("thème") ||
-    (s.includes("couleur") && (s.includes("thème") || s.includes("theme")));
+  // Normalize accents + separators
+  const norm = v
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // strip accents
+    .replace(/[_\-]+/g, " ")
+    .replace(/\s+/g, " ");
 
-  // Prefer explicit mode; fallback to legacy if provided.
-  if (a) {
-    if (isStatus(a)) return "status";
-    if (isTheme(a)) return "theme";
-  }
-  if (b) {
-    if (isStatus(b)) return "status";
-    if (isTheme(b)) return "theme";
-  }
+  if (
+    norm === "status" ||
+    norm === "statut" ||
+    norm === "couleur statut" ||
+    norm === "status color" ||
+    norm === "status couleur"
+  ) return "status";
+
+  if (
+    norm === "theme" ||
+    norm === "couleur theme" ||
+    norm === "couleur du theme"
+  ) return "theme";
+
+  // Fallback: keep backward compat if someone stored boolean-ish values
+  if (norm === "true" || norm === "1" || norm === "yes") return "status";
+  if (norm === "false" || norm === "0" || norm === "no") return "theme";
+
   return "theme";
 }
 
@@ -813,14 +825,6 @@ class Jp2AirQualityCard extends HTMLElement {
     merged.aqi_tiles_per_row = clamp(Number(merged.aqi_tiles_per_row || 3), 1, 6);
     merged.aqi_tile_radius = clamp(Number(merged.aqi_tile_radius ?? 16), 0, 40);
 
-
-    // Backward-compat: older YAML might store knob color mode under bar.knob_color_mode
-    merged.knob_color_mode = normalizeKnobColorMode(merged.knob_color_mode, merged.bar?.knob_color_mode);
-    if (merged.bar && Object.prototype.hasOwnProperty.call(merged.bar, "knob_color_mode")) {
-      // keep config clean (the runtime uses the root key)
-      delete merged.bar.knob_color_mode;
-    }
-
     if (!merged.name) merged.name = DEFAULT_NAME_BY_PRESET[merged.preset] || "Capteur";
     if (!merged.icon) merged.icon = DEFAULT_ICON_BY_PRESET[merged.preset] || "mdi:information";
 
@@ -932,14 +936,14 @@ class Jp2AirQualityCard extends HTMLElement {
     const p = String(preset || "radon");
     const common = { decimals: 0, unit_fallback: "", min: 0, max: 100, good_max: 0, warn_max: 0, label_good: "Bon", label_warn: "Moyen", label_bad: "Mauvais" };
     const map = {
-      radon: { ...common, decimals: 0, unit_fallback: "Bq/m³", min: 0, max: 300, good_max: 99, warn_max: 149, label_good: "Bon", label_warn: "Moyen", label_bad: "Mauvais" },
+      radon: { ...common, decimals: 0, unit_fallback: "Bq/m³", min: 0, max: 300, good_max: 99, warn_max: 299, label_good: "Bon", label_warn: "Moyen", label_bad: "Mauvais" },
       voc: { ...common, decimals: 0, unit_fallback: "ppb", min: 0, max: 3000, good_max: 250, warn_max: 2000, label_good: "Faible", label_warn: "À ventiler", label_bad: "Très élevé" },
       pm1: { ...common, decimals: 1, unit_fallback: "µg/m³", min: 0, max: 100, good_max: 10, warn_max: 25, label_good: "Bon", label_warn: "Moyen", label_bad: "Mauvais" },
       pm25: { ...common, decimals: 1, unit_fallback: "µg/m³", min: 0, max: 150, good_max: 12.0, warn_max: 35.4, label_good: "Bon", label_warn: "Moyen", label_bad: "Mauvais" },
-      co2: { ...common, decimals: 0, unit_fallback: "ppm", min: 400, max: 2000, good_max: 800, warn_max: 1200, label_good: "Bon", label_warn: "À aérer", label_bad: "Élevé" },
-      temperature: { ...common, decimals: 1, unit_fallback: "°C", min: 0, max: 35, good_max: 23, warn_max: 26, label_good: "Confort", label_warn: "À surveiller", label_bad: "Alerte" },
-      humidity: { ...common, decimals: 0, unit_fallback: "%", min: 0, max: 100, good_max: 60, warn_max: 70, label_good: "Confort", label_warn: "À surveiller", label_bad: "Inconfort" },
-      pressure: { ...common, decimals: 0, unit_fallback: "hPa", min: 970, max: 1050, good_max: 1025, warn_max: 1035, label_good: "Normal", label_warn: "Variable", label_bad: "Extrême" },
+      co2: { ...common, decimals: 0, unit_fallback: "ppm", min: 400, max: 2000, good_max: 800, warn_max: 1000, label_good: "Bon", label_warn: "À aérer", label_bad: "Élevé" },
+      temperature: { ...common, decimals: 1, unit_fallback: "°C", min: 0, max: 35, good_min: 18, good_max: 24, warn_min: 16, warn_max: 26, label_good: "Confort", label_warn: "À surveiller", label_bad: "Alerte" },
+      humidity: { ...common, decimals: 0, unit_fallback: "%", min: 0, max: 100, good_min: 40, good_max: 60, warn_min: 30, warn_max: 70, label_good: "Confort", label_warn: "À surveiller", label_bad: "Inconfort" },
+      pressure: { ...common, decimals: 0, unit_fallback: "hPa", min: 950, max: 1050, good_min: 980, good_max: 1030, warn_min: 970, warn_max: 1040, label_good: "Normal", label_warn: "Variable", label_bad: "Extrême" },
     };
     return map[p] || map.radon;
   }
@@ -957,23 +961,93 @@ class Jp2AirQualityCard extends HTMLElement {
     const pc = this._presetConfig(preset);
     const colors = this._colors();
     const v = toNum(value);
+
     if (v === null) {
-      return { level: "unknown", label: "—", color: "var(--secondary-text-color)", ratio: 0 };
+      return { level: "unknown", label: "—", color: "var(--secondary-text-color)", ratio: 0, severity: 0 };
     }
+
+    // Default: "plus c'est bas, mieux c'est" (seuils supérieurs good_max / warn_max)
+    // Certains presets (température/humidité/pression) utilisent une "zone confort" (good_min..good_max),
+    // puis une zone "à surveiller" (warn_min..warn_max) autour.
+    const hasBand =
+      isNum(toNum(pc.good_min)) || isNum(toNum(pc.warn_min));
+
     let level = "bad";
     let label = pc.label_bad;
     let color = colors.bad;
-    if (v <= pc.good_max) {
-      level = "good";
-      label = pc.label_good;
-      color = colors.good;
-    } else if (v <= pc.warn_max) {
-      level = "warn";
-      label = pc.label_warn;
-      color = colors.warn;
+
+    if (hasBand) {
+      const goodMin = toNum(pc.good_min);
+      const goodMax = toNum(pc.good_max);
+      const warnMin = toNum(pc.warn_min);
+      const warnMax = toNum(pc.warn_max);
+
+      const inRange = (x, a, b) => (a !== null && b !== null) ? (x >= a && x <= b) : false;
+
+      if (inRange(v, goodMin, goodMax)) {
+        level = "good";
+        label = pc.label_good;
+        color = colors.good;
+      } else if (inRange(v, warnMin, warnMax)) {
+        level = "warn";
+        label = pc.label_warn;
+        color = colors.warn;
+      } else {
+        level = "bad";
+        label = pc.label_bad;
+        color = colors.bad;
+      }
+    } else {
+      if (v <= pc.good_max) {
+        level = "good";
+        label = pc.label_good;
+        color = colors.good;
+      } else if (v <= pc.warn_max) {
+        level = "warn";
+        label = pc.label_warn;
+        color = colors.warn;
+      }
     }
+
+    // ratio = position du repère sur l'échelle min..max (pour la barre)
     const ratio = pc.max > pc.min ? clamp((v - pc.min) / (pc.max - pc.min), 0, 1) : 0;
-    return { level, label, color, ratio, preset: String(preset) };
+
+    // severity = intensité dans le niveau courant (utilisé pour départager le "pire" en AQI global)
+    let severity = ratio;
+    if (hasBand) {
+      const goodMin = toNum(pc.good_min);
+      const goodMax = toNum(pc.good_max);
+      const warnMin = toNum(pc.warn_min);
+      const warnMax = toNum(pc.warn_max);
+
+      if (level === "good") {
+        severity = 0;
+      } else if (level === "warn") {
+        // 0 au bord de la zone confort, 1 au bord de la zone warn
+        if (goodMin !== null && warnMin !== null && v < goodMin) {
+          const denom = (goodMin - warnMin) || 1;
+          severity = clamp((goodMin - v) / denom, 0, 1);
+        } else if (goodMax !== null && warnMax !== null && v > goodMax) {
+          const denom = (warnMax - goodMax) || 1;
+          severity = clamp((v - goodMax) / denom, 0, 1);
+        } else {
+          severity = 0.5;
+        }
+      } else if (level === "bad") {
+        // 0 au bord warn, 1 au min/max
+        if (warnMin !== null && isNum(pc.min) && v < warnMin) {
+          const denom = (warnMin - pc.min) || 1;
+          severity = clamp((warnMin - v) / denom, 0, 1);
+        } else if (warnMax !== null && isNum(pc.max) && v > warnMax) {
+          const denom = (pc.max - warnMax) || 1;
+          severity = clamp((v - warnMax) / denom, 0, 1);
+        } else {
+          severity = 1;
+        }
+      }
+    }
+
+    return { level, label, color, ratio, severity, preset: String(preset) };
   }
 
   _detectPreset(entityId, stateObj) {
@@ -1252,10 +1326,10 @@ class Jp2AirQualityCard extends HTMLElement {
     if (cardEl) {
       cardEl.style.setProperty("--jp2-status-color", statusColor);
       cardEl.style.setProperty("--jp2-status-outline", cssColorMix(statusColor, 35));
-      const mode = normalizeKnobColorMode(c.knob_color_mode, c.bar?.knob_color_mode);
+      const mode = normalizeKnobColorMode(c);
       if (mode === "status") cardEl.style.setProperty("--jp2-knob-color", statusColor);
       else cardEl.style.setProperty("--jp2-knob-color", "var(--primary-color)");
-    }
+}
 
     this._setCardBackground(statusColor, !!c.background_enabled);
 
@@ -1541,8 +1615,8 @@ class Jp2AirQualityCard extends HTMLElement {
       const considerForGlobal = (!airOnly) || AIR_PRESETS.has(String(preset));
       if (considerForGlobal) {
         const rank = (levelRank[st.level] ?? -1);
-        const ratio = isNum(st.ratio) ? st.ratio : 0;
-        const score = (rank < 0) ? -9999 : (rank * 1000 + Math.round(ratio * 999));
+        const severity = isNum(st.severity) ? st.severity : (isNum(st.ratio) ? st.ratio : 0);
+        const score = (rank < 0) ? -9999 : (rank * 1000 + Math.round(severity * 999));
         if (score > worstScore) {
           worstScore = score;
           worst = { eid, name, preset, status: st };
@@ -1730,10 +1804,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
 
       // Fix: clean any legacy dotted keys like "bar.width" from YAML
       jp2NormalizeDottedRootKeys(merged, ["bar"]);
-
-      // Backward-compat: older YAML might store knob color mode under bar.knob_color_mode
-      merged.knob_color_mode = normalizeKnobColorMode(merged.knob_color_mode, merged.bar?.knob_color_mode);
-      if (merged.bar && Object.prototype.hasOwnProperty.call(merged.bar, "knob_color_mode")) delete merged.bar.knob_color_mode;
 
       this._config = merged;
 
