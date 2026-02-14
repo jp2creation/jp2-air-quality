@@ -45,19 +45,11 @@ A **Home Assistant Lovelace** card with a clean **dashboard look** to display **
 
 ### Option A — HACS (Custom repository)
 
-1. HACS → **Frontend**
-2. Menu (⋮) → **Custom repositories**
-3. Add:
-   - Repository: `jp2creation/jp2-air-quality`
-   - Category: `Lovelace`
-4. Install the card
-5. Refresh your browser cache
+JP2 AAir Quality Card is available in [HACS][hacs] (Home Assistant Community Store).
 
-If the resource isn’t added automatically:
+Use this link to directly go to the repository in HACS
 
-- Settings → Dashboards → Resources → Add  
-- URL: `/hacsfiles/jp2-air-quality/jp2-air-quality.js`  
-- Type: `Module`
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=piitaya&repository=JP2-Air-Quality-Card)
 
 <br>
 
