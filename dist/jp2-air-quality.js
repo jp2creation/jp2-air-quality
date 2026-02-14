@@ -2,9 +2,10 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.0.4.1
-  - Fix: presets — seuils corrigés (radon + profils en plage pour température/humidité/pression).
-  - Fix: repère — mode \"Couleur statut\" robuste (valeurs legacy + bar.knob_color_mode).
+  Release notes — v2.0.4.2
+  - Fix: barre colorée — segments calculés sur les seuils du preset (inclut presets en plage).
+  - Fix: presets — vrais profils en plage pour température/humidité/pression + seuils CO₂/Radon/VOC/PM ajustés.
+  - Fix: repère — mode "Couleur statut" robuste (valeurs legacy + bar.knob_color_mode).
   - Chore: bump version (import de la base) pour itérations rapides.
   - Ref: renommage complet du mode multi-capteurs en "AQI" (configs, UI, méthodes).
   - Fix: éditeur visuel — plus de clés `bar.*` au niveau racine (sync YAML ↔ UI)
@@ -27,7 +28,7 @@
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph and a fluid visual editor (v2).";
-const CARD_VERSION = "2.0.4.1";
+const CARD_VERSION = "2.0.4.2";
 
 
 const CARD_BUILD_DATE = "2026-02-14";
@@ -822,6 +823,10 @@ class Jp2AirQualityCard extends HTMLElement {
     merged.aqi_entities = Array.isArray(merged.aqi_entities) ? merged.aqi_entities : [];
     merged.aqi_overrides = merged.aqi_overrides && typeof merged.aqi_overrides === "object" ? merged.aqi_overrides : {};
 
+    // Normalize legacy knob color mode values/placements
+    merged.knob_color_mode = normalizeKnobColorMode(merged);
+    if (merged.bar && Object.prototype.hasOwnProperty.call(merged.bar, "knob_color_mode")) delete merged.bar.knob_color_mode;
+
     merged.aqi_tiles_per_row = clamp(Number(merged.aqi_tiles_per_row || 3), 1, 6);
     merged.aqi_tile_radius = clamp(Number(merged.aqi_tile_radius ?? 16), 0, 40);
 
@@ -930,22 +935,111 @@ class Jp2AirQualityCard extends HTMLElement {
     }
     return parts.join(";");
   }
-
-
-  _presetConfig(preset) {
+    _presetConfig(preset) {
     const p = String(preset || "radon");
-    const common = { decimals: 0, unit_fallback: "", min: 0, max: 100, good_max: 0, warn_max: 0, label_good: "Bon", label_warn: "Moyen", label_bad: "Mauvais" };
-    const map = {
-      radon: { ...common, decimals: 0, unit_fallback: "Bq/m³", min: 0, max: 300, good_max: 99, warn_max: 299, label_good: "Bon", label_warn: "Moyen", label_bad: "Mauvais" },
-      voc: { ...common, decimals: 0, unit_fallback: "ppb", min: 0, max: 3000, good_max: 250, warn_max: 2000, label_good: "Faible", label_warn: "À ventiler", label_bad: "Très élevé" },
-      pm1: { ...common, decimals: 1, unit_fallback: "µg/m³", min: 0, max: 100, good_max: 10, warn_max: 25, label_good: "Bon", label_warn: "Moyen", label_bad: "Mauvais" },
-      pm25: { ...common, decimals: 1, unit_fallback: "µg/m³", min: 0, max: 150, good_max: 12.0, warn_max: 35.4, label_good: "Bon", label_warn: "Moyen", label_bad: "Mauvais" },
-      co2: { ...common, decimals: 0, unit_fallback: "ppm", min: 400, max: 2000, good_max: 800, warn_max: 1000, label_good: "Bon", label_warn: "À aérer", label_bad: "Élevé" },
-      temperature: { ...common, decimals: 1, unit_fallback: "°C", min: 0, max: 35, good_min: 18, good_max: 24, warn_min: 16, warn_max: 26, label_good: "Confort", label_warn: "À surveiller", label_bad: "Alerte" },
-      humidity: { ...common, decimals: 0, unit_fallback: "%", min: 0, max: 100, good_min: 40, good_max: 60, warn_min: 30, warn_max: 70, label_good: "Confort", label_warn: "À surveiller", label_bad: "Inconfort" },
-      pressure: { ...common, decimals: 0, unit_fallback: "hPa", min: 950, max: 1050, good_min: 980, good_max: 1030, warn_min: 970, warn_max: 1040, label_good: "Normal", label_warn: "Variable", label_bad: "Extrême" },
+
+    // Two profiles:
+    // - type: "rising"  => worse when value rises (CO2/VOC/PM/Radon)
+    // - type: "band"    => comfort range in the middle (Temp/Humidity/Pressure)
+    const common = {
+      type: "rising",
+      decimals: 0,
+      unit_fallback: "",
+      min: 0,
+      max: 100,
+      good_max: 0,
+      warn_max: 0,
+      // band-only (kept undefined for rising presets)
+      warn_low_min: undefined,
+      good_min: undefined,
+      good_max_band: undefined, // internal name to avoid collision
+      warn_high_max: undefined,
+      label_good: "Bon",
+      label_warn: "Moyen",
+      label_bad: "Mauvais",
     };
-    return map[p] || map.radon;
+
+    const map = {
+      // Rising presets
+      radon: { ...common,
+        type: "rising", decimals: 0, unit_fallback: "Bq/m³",
+        min: 0, max: 400,          // étendu pour visualiser la zone rouge (>=300)
+        good_max: 99, warn_max: 299,
+        label_good: "Bon", label_warn: "Moyen", label_bad: "Mauvais",
+      },
+
+      co2: { ...common,
+        type: "rising", decimals: 0, unit_fallback: "ppm",
+        min: 400, max: 2000,
+        good_max: 800, warn_max: 1000,
+        label_good: "Bon", label_warn: "À aérer", label_bad: "Élevé",
+      },
+
+      voc: { ...common,
+        type: "rising", decimals: 0, unit_fallback: "ppb",
+        min: 0, max: 3000,
+        good_max: 250, warn_max: 2000,
+        label_good: "Faible", label_warn: "À ventiler", label_bad: "Très élevé",
+      },
+
+      pm1: { ...common,
+        type: "rising", decimals: 1, unit_fallback: "µg/m³",
+        min: 0, max: 100,
+        good_max: 10, warn_max: 25,
+        label_good: "Bon", label_warn: "Moyen", label_bad: "Mauvais",
+      },
+
+      pm25: { ...common,
+        type: "rising", decimals: 1, unit_fallback: "µg/m³",
+        min: 0, max: 150,
+        good_max: 12.0, warn_max: 35.4,
+        label_good: "Bon", label_warn: "Moyen", label_bad: "Mauvais",
+      },
+
+      // Band presets (comfort zone)
+      temperature: { ...common,
+        type: "band", decimals: 1, unit_fallback: "°C",
+        min: 0, max: 35,
+        warn_low_min: 16,
+        good_min: 18,
+        good_max_band: 24,
+        warn_high_max: 26,
+        label_good: "Confort", label_warn: "À surveiller", label_bad: "Alerte",
+      },
+
+      humidity: { ...common,
+        type: "band", decimals: 0, unit_fallback: "%",
+        min: 0, max: 100,
+        warn_low_min: 30,
+        good_min: 40,
+        good_max_band: 60,
+        warn_high_max: 70,
+        label_good: "Confort", label_warn: "À surveiller", label_bad: "Inconfort",
+      },
+
+      pressure: { ...common,
+        type: "band", decimals: 0, unit_fallback: "hPa",
+        min: 950, max: 1050,
+        warn_low_min: 970,
+        good_min: 980,
+        good_max_band: 1030,
+        warn_high_max: 1040,
+        label_good: "Normal", label_warn: "Variable", label_bad: "Extrême",
+      },
+    };
+
+    const cfg = map[p] || map.radon;
+
+    // Back-compat: some older code expects pc.good_max / pc.warn_max to exist.
+    // For band presets, we keep good_max/warn_max mapped to the *high* side thresholds.
+    if (cfg.type === "band") {
+      return {
+        ...cfg,
+        good_max: cfg.good_max_band,
+        warn_max: cfg.warn_high_max,
+      };
+    }
+    return cfg;
   }
 
   _colors() {
@@ -963,32 +1057,31 @@ class Jp2AirQualityCard extends HTMLElement {
     const v = toNum(value);
 
     if (v === null) {
-      return { level: "unknown", label: "—", color: "var(--secondary-text-color)", ratio: 0, severity: 0 };
+      return { level: "unknown", label: "—", color: "var(--secondary-text-color)", ratio: 0 };
     }
-
-    // Default: "plus c'est bas, mieux c'est" (seuils supérieurs good_max / warn_max)
-    // Certains presets (température/humidité/pression) utilisent une "zone confort" (good_min..good_max),
-    // puis une zone "à surveiller" (warn_min..warn_max) autour.
-    const hasBand =
-      isNum(toNum(pc.good_min)) || isNum(toNum(pc.warn_min));
 
     let level = "bad";
     let label = pc.label_bad;
     let color = colors.bad;
 
-    if (hasBand) {
-      const goodMin = toNum(pc.good_min);
-      const goodMax = toNum(pc.good_max);
-      const warnMin = toNum(pc.warn_min);
-      const warnMax = toNum(pc.warn_max);
+    if (String(pc.type) === "band") {
+      const min = Number(pc.min);
+      const max = Number(pc.max);
 
-      const inRange = (x, a, b) => (a !== null && b !== null) ? (x >= a && x <= b) : false;
+      const warnLowMin = Number(pc.warn_low_min);
+      const goodMin = Number(pc.good_min);
+      const goodMax = Number(pc.good_max_band);
+      const warnHighMax = Number(pc.warn_high_max);
 
-      if (inRange(v, goodMin, goodMax)) {
+      const inGood = (v >= goodMin && v <= goodMax);
+      const inWarnLow = (v >= warnLowMin && v < goodMin);
+      const inWarnHigh = (v > goodMax && v <= warnHighMax);
+
+      if (inGood) {
         level = "good";
         label = pc.label_good;
         color = colors.good;
-      } else if (inRange(v, warnMin, warnMax)) {
+      } else if (inWarnLow || inWarnHigh) {
         level = "warn";
         label = pc.label_warn;
         color = colors.warn;
@@ -997,57 +1090,90 @@ class Jp2AirQualityCard extends HTMLElement {
         label = pc.label_bad;
         color = colors.bad;
       }
-    } else {
-      if (v <= pc.good_max) {
-        level = "good";
-        label = pc.label_good;
-        color = colors.good;
-      } else if (v <= pc.warn_max) {
-        level = "warn";
-        label = pc.label_warn;
-        color = colors.warn;
-      }
+
+      const ratio = (max > min) ? clamp((v - min) / (max - min), 0, 1) : 0;
+      return { level, label, color, ratio, preset: String(preset) };
     }
 
-    // ratio = position du repère sur l'échelle min..max (pour la barre)
+    // Rising presets (default)
+    if (v <= pc.good_max) {
+      level = "good";
+      label = pc.label_good;
+      color = colors.good;
+    } else if (v <= pc.warn_max) {
+      level = "warn";
+      label = pc.label_warn;
+      color = colors.warn;
+    }
+
     const ratio = pc.max > pc.min ? clamp((v - pc.min) / (pc.max - pc.min), 0, 1) : 0;
+    return { level, label, color, ratio, preset: String(preset) };
+  }
 
-    // severity = intensité dans le niveau courant (utilisé pour départager le "pire" en AQI global)
-    let severity = ratio;
-    if (hasBand) {
-      const goodMin = toNum(pc.good_min);
-      const goodMax = toNum(pc.good_max);
-      const warnMin = toNum(pc.warn_min);
-      const warnMax = toNum(pc.warn_max);
+  _barSegmentsFor(preset) {
+    const pc = this._presetConfig(preset);
+    const min = Number(pc.min);
+    const max = Number(pc.max);
+    const span = max - min;
 
-      if (level === "good") {
-        severity = 0;
-      } else if (level === "warn") {
-        // 0 au bord de la zone confort, 1 au bord de la zone warn
-        if (goodMin !== null && warnMin !== null && v < goodMin) {
-          const denom = (goodMin - warnMin) || 1;
-          severity = clamp((goodMin - v) / denom, 0, 1);
-        } else if (goodMax !== null && warnMax !== null && v > goodMax) {
-          const denom = (warnMax - goodMax) || 1;
-          severity = clamp((v - goodMax) / denom, 0, 1);
-        } else {
-          severity = 0.5;
-        }
-      } else if (level === "bad") {
-        // 0 au bord warn, 1 au min/max
-        if (warnMin !== null && isNum(pc.min) && v < warnMin) {
-          const denom = (warnMin - pc.min) || 1;
-          severity = clamp((warnMin - v) / denom, 0, 1);
-        } else if (warnMax !== null && isNum(pc.max) && v > warnMax) {
-          const denom = (pc.max - warnMax) || 1;
-          severity = clamp((v - warnMax) / denom, 0, 1);
-        } else {
-          severity = 1;
-        }
-      }
+    const fallback = () => [
+      { cls: "good", pct: 33.333 },
+      { cls: "warn", pct: 33.333 },
+      { cls: "bad", pct: 33.334 },
+    ];
+
+    if (!isNum(min) || !isNum(max) || span <= 0) return fallback();
+
+    const pct = (a, b) => clamp(((b - a) / span) * 100, 0, 100);
+
+    let segs = [];
+
+    if (String(pc.type) === "band") {
+      const warnLowMin = clamp(Number(pc.warn_low_min), min, max);
+      const goodMin = clamp(Number(pc.good_min), min, max);
+      const goodMax = clamp(Number(pc.good_max_band), min, max);
+      const warnHighMax = clamp(Number(pc.warn_high_max), min, max);
+
+      const stops = [min, warnLowMin, goodMin, goodMax, warnHighMax, max];
+
+      segs = [
+        { cls: "bad", from: stops[0], to: stops[1] },
+        { cls: "warn", from: stops[1], to: stops[2] },
+        { cls: "good", from: stops[2], to: stops[3] },
+        { cls: "warn", from: stops[3], to: stops[4] },
+        { cls: "bad", from: stops[4], to: stops[5] },
+      ]
+        .map((s) => ({ cls: s.cls, pct: pct(s.from, s.to) }))
+        .filter((s) => s.pct > 0.05);
+    } else {
+      const goodMax = clamp(Number(pc.good_max), min, max);
+      const warnMax = clamp(Number(pc.warn_max), min, max);
+      const stops = [min, goodMax, warnMax, max];
+
+      segs = [
+        { cls: "good", from: stops[0], to: stops[1] },
+        { cls: "warn", from: stops[1], to: stops[2] },
+        { cls: "bad", from: stops[2], to: stops[3] },
+      ]
+        .map((s) => ({ cls: s.cls, pct: pct(s.from, s.to) }))
+        .filter((s) => s.pct > 0.05);
     }
 
-    return { level, label, color, ratio, severity, preset: String(preset) };
+    if (!segs.length) return fallback();
+
+    // Force sum to 100% (avoid 99.99 due to floats)
+    const sum = segs.reduce((a, s) => a + s.pct, 0);
+    const delta = 100 - sum;
+    segs[segs.length - 1].pct = Math.max(0, segs[segs.length - 1].pct + delta);
+
+    return segs;
+  }
+
+  _buildBarInner(preset) {
+    const segs = this._barSegmentsFor(preset);
+    return el("div", { class: "bar-inner" }, segs.map((s) =>
+      el("div", { class: `seg ${s.cls}`, style: { flex: `0 0 ${s.pct.toFixed(3)}%` } })
+    ));
   }
 
   _detectPreset(entityId, stateObj) {
@@ -1144,11 +1270,6 @@ class Jp2AirQualityCard extends HTMLElement {
           background: var(--divider-color, rgba(0,0,0,.12));
           display: flex;
         }
-        .bar-inner .seg { height: 100%; flex: 1; opacity: var(--jp2-bar-opacity, 1); }
-        .bar-inner .seg.good { background: var(--jp2-good); }
-        .bar-inner .seg.warn { background: var(--jp2-warn); }
-        .bar-inner .seg.bad { background: var(--jp2-bad); }
-
         .bar-inner .seg { height: 100%; flex: 1; opacity: var(--jp2-bar-opacity, 1); }
         .bar-inner .seg.good { background: var(--jp2-good); }
         .bar-inner .seg.warn { background: var(--jp2-warn); }
@@ -1384,11 +1505,7 @@ class Jp2AirQualityCard extends HTMLElement {
       if (align === "left") { bar.style.marginLeft = "0"; bar.style.marginRight = "auto"; }
       else if (align === "right") { bar.style.marginLeft = "auto"; bar.style.marginRight = "0"; }
       else { bar.style.marginLeft = "auto"; bar.style.marginRight = "auto"; }
-      const inner = el("div", { class: "bar-inner" }, [
-        el("div", { class: "seg good" }),
-        el("div", { class: "seg warn" }),
-        el("div", { class: "seg bad" }),
-      ]);
+      const inner = this._buildBarInner(preset);
       bar.appendChild(inner);
 
       if (c.show_knob !== false && value !== null) {
@@ -1800,6 +1917,10 @@ class Jp2AirQualityCardEditor extends HTMLElement {
 
       merged.aqi_entities = Array.isArray(merged.aqi_entities) ? merged.aqi_entities : [];
       merged.aqi_overrides = merged.aqi_overrides && typeof merged.aqi_overrides === "object" ? merged.aqi_overrides : {};
+
+    // Normalize legacy knob color mode values/placements
+    merged.knob_color_mode = normalizeKnobColorMode(merged);
+    if (merged.bar && Object.prototype.hasOwnProperty.call(merged.bar, "knob_color_mode")) delete merged.bar.knob_color_mode;
       merged.aqi_air_only = !!merged.aqi_air_only;
 
       // Fix: clean any legacy dotted keys like "bar.width" from YAML
