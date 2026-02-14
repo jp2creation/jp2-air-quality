@@ -2,7 +2,7 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.0.4.3
+  Release notes — v2.0.4.4
   - Fix: barre colorée — segments calculés sur les seuils du preset (inclut presets en plage).
   - Fix: presets — vrais profils en plage pour température/humidité/pression + seuils CO₂/Radon/VOC/PM ajustés.
   - Fix: repère — mode "Couleur statut" robuste (valeurs legacy + bar.knob_color_mode).
@@ -24,12 +24,15 @@
   - Feat: barre colorée — taille du contour du repère (épaisseur).
   - Feat: AQI — option “Air uniquement” (statut global ignore temp/humidité/pression).
   - Fix: AQI — détection preset améliorée (température/humidité/pression).
-  - Feat: AQI — icône SVG au-dessus du statut global (good/warn/bad) avec couleurs (statut/perso) + cercle/fond optionnels.*/
+  - Feat: AQI — icône SVG au-dessus du statut global (good/warn/bad) avec couleurs (statut/perso) + cercle/fond optionnels.
+  - Feat: AQI — options aqi_global_svg_position (global/center) + aqi_global_svg_align (left/center/right).
+  - Feat: AQI — personnalisation du statut global (dot/texte) : taille/contour/épaisseur + possibilité de masquer le statut en gardant le SVG.
+*/
 
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph and a fluid visual editor (v2).";
-const CARD_VERSION = "2.0.4.3";
+const CARD_VERSION = "2.0.4.4";
 
 
 const CARD_BUILD_DATE = "2026-02-14";
@@ -471,6 +474,16 @@ class Jp2AirQualityCard extends HTMLElement {
       aqi_global_svg_circle_width: 1,
       aqi_global_svg_circle_color_mode: "status", // status | custom
       aqi_global_svg_circle_color: "",
+
+
+      // AQI global — statut (dot + texte)
+      aqi_global_status_enabled: true,
+      aqi_global_status_show_dot: true,
+      aqi_global_status_show_text: true,
+      aqi_global_status_dot_size: 10,
+      aqi_global_status_dot_outline: 1,
+      aqi_global_status_text_size: 0, // 0 = auto
+      aqi_global_status_text_weight: 0, // 0 = auto
 
 
       aqi_background_enabled: false,
@@ -1333,11 +1346,12 @@ class Jp2AirQualityCard extends HTMLElement {
 
         .aqi { display:none; }
         .aqi.show { display:block; }
-        .aqi-head { display:flex; align-items:baseline; justify-content:space-between; gap: 10px; }
+        .aqi-head { display:flex; align-items:flex-start; justify-content:space-between; gap: 10px; }
+        .aqi-global-top-svg { width:100%; display:flex; justify-content:center; margin: 0 0 8px; }
         .aqi-title { font-weight: 800; display:flex; align-items:center; gap: 8px; }
         .aqi-title ha-icon { --mdc-icon-size: 18px; opacity: .9; }
         .aqi-global { font-weight: 700; opacity:.85; display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
-        .aqi-global-status { display:flex; gap:8px; align-items:center; }
+        .aqi-global-status { display:flex; gap:8px; align-items:center; width:100%; }
         .aqi-global-icon { width: var(--jp2-aqi-global-size, 52px); height: var(--jp2-aqi-global-size, 52px); display:flex; align-items:center; justify-content:center; position:relative; }
         .aqi-global-icon-bg { position:absolute; inset:0; border-radius:999px; background: var(--jp2-aqi-global-bg, var(--primary-color)); opacity: var(--jp2-aqi-global-bg-opacity, .12); }
         .aqi-global-icon-circle { position:absolute; inset:0; border-radius:999px; border: var(--jp2-aqi-global-circle-w, 1px) solid var(--jp2-aqi-global-circle, var(--divider-color, rgba(0,0,0,.12))); opacity: var(--jp2-aqi-global-circle-opacity, 1); }
@@ -1908,18 +1922,56 @@ class Jp2AirQualityCard extends HTMLElement {
       kids.push(el("span", {}, [c.aqi_title || "AQI"]));
       return el("div", { class: "aqi-title" }, kids);
     })();
-    const globalEl = (c.aqi_show_global === false) ? null : (() => {
-      const parts = [];
-      const svgEl = this._buildAqiGlobalSvg(globalLevel, globalColor);
-      if (svgEl) parts.push(svgEl);
+    const showGlobal = (c.aqi_show_global !== false);
 
-      parts.push(el("div", { class: "aqi-global-status" }, [
-        el("span", { class: "dot", style: { background: globalColor } }),
-        el("span", {}, [globalLabel]),
-      ]));
+    const alignMap = { left: "flex-start", center: "center", right: "flex-end" };
+    const svgPos = String(c.aqi_global_svg_position || "global"); // global | center
+    const svgAlignKey = String(c.aqi_global_svg_align || "center"); // left | center | right
+    const svgJustify = alignMap[svgAlignKey] || "center";
 
-      return el("div", { class: "aqi-global" }, parts);
-    })();
+    // SVG (good/warn/bad) — peut être placé à droite (global) ou centré sur la carte
+    const _svgEl = this._buildAqiGlobalSvg(globalLevel, globalColor);
+    const svgTopEl = (!showGlobal || !_svgEl || svgPos !== "center") ? null : el("div", {
+      class: "aqi-global-top-svg",
+      style: { justifyContent: svgJustify }
+    }, [_svgEl]);
+
+    const svgInGlobal = (!showGlobal || !_svgEl || svgPos === "center") ? null : _svgEl;
+
+    // Statut global (dot + texte) — configurable, peut être masqué sans masquer le SVG
+    const statusEnabled = (c.aqi_global_status_enabled !== false);
+    const statusShowDot = (c.aqi_global_status_show_dot !== false);
+    const statusShowText = (c.aqi_global_status_show_text !== false);
+
+    const dotSize = clamp(Number(c.aqi_global_status_dot_size ?? 10), 4, 30);
+    const dotOutline = clamp(Number(c.aqi_global_status_dot_outline ?? 1), 0, 12);
+    const textSize = clamp(Number(c.aqi_global_status_text_size ?? 0), 0, 40);
+    const textWeight = clamp(Number(c.aqi_global_status_text_weight ?? 0), 0, 900);
+
+    const labelStyle = {};
+    if (textSize) labelStyle.fontSize = `${textSize}px`;
+    if (textWeight) labelStyle.fontWeight = String(textWeight);
+
+    const dotStyle = { background: globalColor, width: `${dotSize}px`, height: `${dotSize}px` };
+    dotStyle.boxShadow = dotOutline
+      ? `0 0 0 ${dotOutline}px rgba(255,255,255,.9), 0 0 0 ${dotOutline + 1}px rgba(0,0,0,.20)`
+      : "none";
+
+    const globalStatusEl = (!showGlobal || !statusEnabled || (!statusShowDot && !statusShowText)) ? null : el("div", {
+      class: "aqi-global-status",
+      style: { justifyContent: svgJustify }
+    }, [
+      statusShowDot ? el("span", { class: "dot", style: dotStyle }) : null,
+      statusShowText ? el("span", Object.keys(labelStyle).length ? { style: labelStyle } : {}, [globalLabel]) : null,
+    ]);
+
+    const globalEl = (!showGlobal || (!svgInGlobal && !globalStatusEl)) ? null : el("div", {
+      class: "aqi-global",
+      style: { alignItems: svgJustify }
+    }, [
+      svgInGlobal,
+      globalStatusEl,
+    ]);
 
     const head = el("div", { class: "aqi-head" }, [
       titleEl,
@@ -2028,6 +2080,7 @@ class Jp2AirQualityCard extends HTMLElement {
     }
 
     aqi.innerHTML = "";
+    if (svgTopEl) aqi.appendChild(svgTopEl);
     aqi.appendChild(head);
     if (body) aqi.appendChild(body);
   }
@@ -2424,6 +2477,11 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         this._makeForm(this._schemaAqiGlobalSvg(), this._config)
       ));
       root.appendChild(this._section(
+        "Statut global — Style",
+        "Réglages du point (taille/contour) et du texte. Tu peux masquer le statut tout en gardant le SVG.",
+        this._makeForm(this._schemaAqiGlobalStatus(), this._config)
+      ));
+      root.appendChild(this._section(
         "Aperçu rapide",
         "Clique sur une pastille pour ouvrir “Plus d’infos” sur le capteur.",
         this._aqiPreview()
@@ -2586,6 +2644,8 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       aqi_background_enabled: "Fond coloré",
       // AQI global SVG
       aqi_global_svg_enabled: "Icône SVG au-dessus du statut",
+      aqi_global_svg_position: "Position du SVG",
+      aqi_global_svg_align: "Alignement du SVG",
       aqi_global_svg_size: "Taille SVG (px)",
       aqi_global_svg_color_mode: "Couleur SVG",
       aqi_global_svg_color: "Couleur SVG (perso)",
@@ -2598,6 +2658,14 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       aqi_global_svg_circle_width: "Épaisseur cercle (px)",
       aqi_global_svg_circle_color_mode: "Couleur cercle",
       aqi_global_svg_circle_color: "Couleur cercle (perso)",
+      // AQI global status
+      aqi_global_status_enabled: "Afficher le statut (dot + texte)",
+      aqi_global_status_show_dot: "Afficher le point",
+      aqi_global_status_show_text: "Afficher le texte",
+      aqi_global_status_dot_size: "Taille du point (px)",
+      aqi_global_status_dot_outline: "Contour du point (px)",
+      aqi_global_status_text_size: "Taille du texte (px)",
+      aqi_global_status_text_weight: "Épaisseur du texte",
       // AQI entities / layout
       aqi_entities: "Entités (capteurs)",
       aqi_layout: "Disposition",
@@ -2652,6 +2720,8 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       aqi_tile_outline_transparent: "Si activé, supprime aussi la bordure des tuiles (aucun contour).",
       aqi_tiles_icons_only: "Uniquement en disposition horizontale : n’affiche que l’icône de chaque capteur.",
       aqi_global_svg_enabled: "Affiche une icône SVG au-dessus du statut global (good/warn/bad).",
+      aqi_global_svg_position: "Position : global = à droite (au-dessus du statut) ; center = centré en haut de la carte.",
+      aqi_global_svg_align: "Alignement horizontal du SVG (gauche/centre/droite).",
       aqi_global_svg_size: "Taille de l’icône (px).",
       aqi_global_svg_color_mode: "Couleur du SVG : statut ou personnalisée.",
       aqi_global_svg_color: "Couleur CSS (ex: #ff0000). Laisse vide pour auto.",
@@ -2664,6 +2734,13 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       aqi_global_svg_circle_width: "Épaisseur du contour (0 = pas de contour).",
       aqi_global_svg_circle_color_mode: "Couleur du contour : statut ou personnalisée.",
       aqi_global_svg_circle_color: "Couleur CSS du contour. Laisse vide pour auto.",
+      aqi_global_status_enabled: "Affiche le statut global (dot + texte). Désactive-le pour garder uniquement le SVG.",
+      aqi_global_status_show_dot: "Affiche/masque le point (dot).",
+      aqi_global_status_show_text: "Affiche/masque le texte du statut.",
+      aqi_global_status_dot_size: "Taille du point (px).",
+      aqi_global_status_dot_outline: "Épaisseur du contour du point (px). 0 = aucun.",
+      aqi_global_status_text_size: "Taille du texte du statut (px). 0 = auto.",
+      aqi_global_status_text_weight: "Épaisseur (weight) du texte. 0 = auto.",
       aqi_text_name_size: "0 = auto (taille par défaut).",
       aqi_text_name_weight: "0 = auto. Valeurs usuelles : 400 / 600 / 700 / 800 / 900.",
       aqi_text_value_size: "0 = auto.",
@@ -2919,14 +2996,25 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       { name: "aqi_background_enabled", selector: { boolean: {} } },
     ];
   }
-
   _schemaAqiGlobalSvg() {
     const colorModeOptions = [
       { label: "Couleur du statut", value: "status" },
       { label: "Couleur personnalisée", value: "custom" },
     ];
+    const positionOptions = [
+      { label: "À droite (bloc global)", value: "global" },
+      { label: "Centré sur la carte", value: "center" },
+    ];
+    const alignOptions = [
+      { label: "Gauche", value: "left" },
+      { label: "Centre", value: "center" },
+      { label: "Droite", value: "right" },
+    ];
     return [
       { name: "aqi_global_svg_enabled", selector: { boolean: {} } },
+      { name: "aqi_global_svg_position", selector: { select: { options: positionOptions, mode: "dropdown" } } },
+      { name: "aqi_global_svg_align", selector: { select: { options: alignOptions, mode: "dropdown" } } },
+
       { name: "aqi_global_svg_size", selector: { number: { min: 18, max: 140, step: 1, mode: "box" } } },
       { name: "aqi_global_svg_color_mode", selector: { select: { options: colorModeOptions, mode: "dropdown" } } },
       { name: "aqi_global_svg_color", selector: { text: {} } },
@@ -2942,6 +3030,18 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       { name: "aqi_global_svg_circle_width", selector: { number: { min: 0, max: 10, step: 1, mode: "box" } } },
       { name: "aqi_global_svg_circle_color_mode", selector: { select: { options: colorModeOptions, mode: "dropdown" } } },
       { name: "aqi_global_svg_circle_color", selector: { text: {} } },
+    ];
+  }
+
+  _schemaAqiGlobalStatus() {
+    return [
+      { name: "aqi_global_status_enabled", selector: { boolean: {} } },
+      { name: "aqi_global_status_show_dot", selector: { boolean: {} } },
+      { name: "aqi_global_status_show_text", selector: { boolean: {} } },
+      { name: "aqi_global_status_dot_size", selector: { number: { min: 4, max: 30, step: 1, mode: "box" } } },
+      { name: "aqi_global_status_dot_outline", selector: { number: { min: 0, max: 12, step: 1, mode: "box" } } },
+      { name: "aqi_global_status_text_size", selector: { number: { min: 0, max: 40, step: 1, mode: "box" } } },
+      { name: "aqi_global_status_text_weight", selector: { number: { min: 0, max: 900, step: 100, mode: "box" } } },
     ];
   }
 
