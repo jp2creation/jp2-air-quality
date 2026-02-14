@@ -3,9 +3,10 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.0.3.6
+  Release notes — v2.0.3.8
   - Chore: bump version (import de la base) pour itérations rapides.
   - Ref: renommage complet du mode multi-capteurs en "AQI" (configs, UI, méthodes).
+  - Fix: éditeur visuel — plus de clés `bar.*` au niveau racine (sync YAML ↔ UI)
   - Fix: barre colorée (alignement/ombre) + repère non coupé
   - Ref: refonte totale de l’éditeur visuel (UI fluide + navigation par onglets + aperçu AQI + overrides).
   - Ref: code restructuré (helpers centralisés, rendu éditeur sans reflow inutile).
@@ -21,10 +22,10 @@
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph and a fluid visual editor (v2).";
-const CARD_VERSION = "2.0.3.6";
+const CARD_VERSION = "2.0.3.8";
 
 
-const CARD_BUILD_DATE = "2026-02-13";
+const CARD_BUILD_DATE = "2026-02-14";
 // -------------------------
 // Defaults / presets
 // -------------------------
@@ -98,6 +99,115 @@ function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj || {}));
 }
 
+
+function normalizeHaFormSchema(schema) {
+  const walk = (node) => {
+    if (Array.isArray(node)) return node.map(walk);
+    if (!node || typeof node !== "object") return node;
+    const out = { ...node };
+    // ha-form does NOT support "path", but it supports dot notation in "name"
+    if (out.path && out.name) {
+      out.name = `${out.path}.${out.name}`;
+      delete out.path;
+    }
+    if (Array.isArray(out.schema)) out.schema = out.schema.map(walk);
+    return out;
+  };
+  return walk(schema || []);
+}
+
+
+
+// -------------------------
+// ha-form helpers (nested dot keys)
+// -------------------------
+function jp2GetDeep(obj, path) {
+  if (!obj || typeof obj !== "object") return undefined;
+  const parts = String(path || "").split(".").filter(Boolean);
+  let cur = obj;
+  for (const p of parts) {
+    if (!cur || typeof cur !== "object") return undefined;
+    cur = cur[p];
+  }
+  return cur;
+}
+
+function jp2SetDeep(obj, path, value) {
+  if (!obj || typeof obj !== "object") return obj;
+  const parts = String(path || "").split(".").filter(Boolean);
+  if (parts.length === 0) return obj;
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const p = parts[i];
+    if (!cur[p] || typeof cur[p] !== "object" || Array.isArray(cur[p])) cur[p] = {};
+    cur = cur[p];
+  }
+  cur[parts[parts.length - 1]] = value;
+  return obj;
+}
+
+// Move any dotted root keys like "bar.width" into nested objects and delete the dotted key.
+function jp2NormalizeDottedRootKeys(cfg, rootPrefixes = ["bar"]) {
+  if (!cfg || typeof cfg !== "object") return cfg;
+  for (const root of rootPrefixes) {
+    const prefix = `${root}.`;
+    for (const k of Object.keys(cfg)) {
+      if (!k || typeof k !== "string") continue;
+      if (!k.startsWith(prefix)) continue;
+      const sub = k.slice(prefix.length);
+      if (!cfg[root] || typeof cfg[root] !== "object" || Array.isArray(cfg[root])) cfg[root] = {};
+      const existing = jp2GetDeep(cfg[root], sub);
+      if (existing === undefined) jp2SetDeep(cfg[root], sub, cfg[k]);
+      delete cfg[k];
+    }
+  }
+  return cfg;
+}
+
+function jp2CollectSchemaNames(schema) {
+  const names = [];
+  const walk = (node) => {
+    if (Array.isArray(node)) { node.forEach(walk); return; }
+    if (!node || typeof node !== "object") return;
+    if (typeof node.name === "string" && node.name) names.push(node.name);
+    if (Array.isArray(node.schema)) node.schema.forEach(walk);
+  };
+  walk(schema);
+  return names;
+}
+
+// Provide ha-form with dotted proxy keys (e.g. "bar.width") so values show up in the UI,
+// while keeping the real config nested under cfg.bar.width, etc.
+function jp2BuildHaFormData(normalizedSchema, cfg) {
+  const data = deepClone(cfg || {});
+  const names = jp2CollectSchemaNames(normalizedSchema || []);
+  for (const n of names) {
+    if (!n.includes(".")) continue;
+    const v = jp2GetDeep(cfg || {}, n);
+    if (v !== undefined) data[n] = v;
+  }
+  return data;
+}
+
+// Collapse ha-form's returned value back into nested objects (no dotted keys).
+function jp2CollapseHaFormValue(value) {
+  const v = value && typeof value === "object" ? value : {};
+  const out = {};
+  for (const [k, val] of Object.entries(v)) {
+    if (typeof k === "string" && k.includes(".")) {
+      jp2SetDeep(out, k, val);
+    } else {
+      out[k] = val;
+    }
+  }
+  // Merge any explicit nested objects provided by ha-form (if any)
+  if (v.bar && typeof v.bar === "object" && !Array.isArray(v.bar)) {
+    out.bar = { ...(out.bar || {}), ...v.bar };
+  }
+  // Ensure we never keep dotted keys
+  jp2NormalizeDottedRootKeys(out, ["bar"]);
+  return out;
+}
 
 function normalizeMultiModeConfig(config) {
   // Backward compatibility: map legacy multi-sensors mode/keys to the new "aqi" naming.
@@ -247,6 +357,7 @@ class Jp2AirQualityCard extends HTMLElement {
         align: "center",
         width: 92,
         height: 6,
+        opacity: 100,
         good: "#45d58e",
         warn: "#ffb74d",
         bad: "#ff6363",
@@ -277,6 +388,17 @@ class Jp2AirQualityCard extends HTMLElement {
       aqi_show_sensor_value: true,
       aqi_show_sensor_unit: true,
       aqi_show_sensor_status: true,
+
+
+      // AQI typography (0 = auto)
+      aqi_text_name_size: 0,
+      aqi_text_name_weight: 0,
+      aqi_text_value_size: 0,
+      aqi_text_value_weight: 0,
+      aqi_text_unit_size: 0,
+      aqi_text_unit_weight: 0,
+      aqi_text_status_size: 0,
+      aqi_text_status_weight: 0,
 
       // AQI icon defaults + global style
       aqi_icon_size: 34,
@@ -466,6 +588,7 @@ class Jp2AirQualityCard extends HTMLElement {
               { name: "bad", selector: { text: {} }, path: "bar" },
               { name: "width", selector: { number: { min: 50, max: 100, mode: "box", step: 1 } }, path: "bar" },
               { name: "height", selector: { number: { min: 4, max: 18, mode: "box", step: 1 } }, path: "bar" },
+              { name: "opacity", selector: { number: { min: 0, max: 100, mode: "box", step: 1 } }, path: "bar" },
               { name: "align", selector: { select: { options: [
                 { label: "Centré", value: "center" },
                 { label: "Gauche", value: "left" },
@@ -579,10 +702,10 @@ class Jp2AirQualityCard extends HTMLElement {
       width: "Largeur (%)",
       height: "Hauteur (px)",
       align: "Alignement",
+      opacity: "Opacité barre (%)",
       aqi_title: "Titre AQI",
       aqi_title_icon: "Icône du titre (AQI)",
       aqi_entities: "Entités AQI",
-      aqi_title_icon: "Optionnel : une icône affichée à gauche du titre en mode AQI.",
       aqi_show_title: "Afficher le titre",
       aqi_show_global: "Afficher le statut global",
       aqi_show_sensors: "Afficher la liste des capteurs",
@@ -591,15 +714,24 @@ class Jp2AirQualityCard extends HTMLElement {
 
     const helperMap = {
       aqi_entities: "Ajoute plusieurs capteurs (CO₂, VOC/TVOC, PM2.5, Radon...). Un statut Bon/Moyen/Mauvais est calculé pour chacun.",
+      aqi_title_icon: "Optionnel : une icône affichée à gauche du titre en mode AQI.",
       graph_color: "Ex: var(--primary-color) ou #00bcd4. Vide = couleur du thème.",
       graph_warn_color: "Vide = couleur orange de la barre.",
       graph_bad_color: "Vide = couleur rouge de la barre.",
     };
 
     return {
-      schema,
-      computeLabel: (s) => labelMap[s.name] || s.name,
-      computeHelper: (s) => helperMap[s.name] || "",
+      schema: normalizeHaFormSchema(schema),
+      computeLabel: (s) => {
+        const n = String(s?.name || "");
+        const key = n.startsWith("bar.") ? n.slice(4) : n;
+        return labelMap[n] || labelMap[key] || n;
+      },
+      computeHelper: (s) => {
+        const n = String(s?.name || "");
+        const key = n.startsWith("bar.") ? n.slice(4) : n;
+        return helperMap[n] || helperMap[key] || "";
+      },
     };
   }
 
@@ -840,12 +972,12 @@ class Jp2AirQualityCard extends HTMLElement {
           background: var(--divider-color, rgba(0,0,0,.12));
           display: flex;
         }
-        .bar-inner .seg { height: 100%; flex: 1; }
+        .bar-inner .seg { height: 100%; flex: 1; opacity: var(--jp2-bar-opacity, 1); }
         .bar-inner .seg.good { background: var(--jp2-good); }
         .bar-inner .seg.warn { background: var(--jp2-warn); }
         .bar-inner .seg.bad { background: var(--jp2-bad); }
 
-        .bar-inner .seg { height: 100%; flex: 1; }
+        .bar-inner .seg { height: 100%; flex: 1; opacity: var(--jp2-bar-opacity, 1); }
         .bar-inner .seg.good { background: var(--jp2-good); }
         .bar-inner .seg.warn { background: var(--jp2-warn); }
         .bar-inner .seg.bad { background: var(--jp2-bad); }
@@ -870,11 +1002,12 @@ class Jp2AirQualityCard extends HTMLElement {
         .aqi-list { display:flex; flex-direction:column; gap: 8px; margin-top: 8px; }
         .aqi-row { display:flex; align-items:center; gap: 10px; padding: 8px 10px; border-radius: 14px; background: var(--secondary-background-color, rgba(0,0,0,.03)); border: 1px solid var(--divider-color, rgba(0,0,0,.12)); }
         .aqi-row .meta { min-width:0; flex:1 1 auto; }
-        .aqi-row .name { font-weight: 700; line-height:1.1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .aqi-row .name { font-weight: var(--jp2-aqi-name-weight, 700); font-size: var(--jp2-aqi-name-size, inherit); line-height:1.1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .aqi-row .entity { font-size: 11px; opacity: .6; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .aqi-row .right { text-align:right; flex:0 0 auto; }
-        .aqi-row .val { font-weight: 800; }
-        .aqi-row .st { display:flex; justify-content:flex-end; gap:6px; align-items:center; opacity:.85; font-weight:600; }
+        .aqi-row .val { font-weight: var(--jp2-aqi-value-weight, 800); font-size: var(--jp2-aqi-value-size, inherit); }
+        .aqi-unit { margin-left: 6px; opacity: .7; font-weight: var(--jp2-aqi-unit-weight, 600); font-size: var(--jp2-aqi-unit-size, inherit); }
+        .aqi-row .st { display:flex; justify-content:flex-end; gap:6px; align-items:center; opacity:.85; font-weight: var(--jp2-aqi-status-weight, 600); font-size: var(--jp2-aqi-status-size, inherit); }
 
         .tiles { display:grid; gap: 10px; margin-top: 10px; grid-template-columns: repeat(var(--jp2-aqi-cols, 3), minmax(0, 1fr)); }
         .tile { padding: 10px; border-radius: var(--jp2-aqi-tile-radius, 16px); border: 1px solid var(--divider-color, rgba(0,0,0,.12)); background: var(--secondary-background-color, rgba(0,0,0,.03)); display:flex; flex-direction:column; gap: 8px; min-width: 0; }
@@ -885,10 +1018,10 @@ class Jp2AirQualityCard extends HTMLElement {
         .tile.colored::before { content:""; position:absolute; inset:0; border-radius:inherit; background: var(--jp2-aqi-tile-color, var(--primary-color)); opacity:.12; pointer-events:none; }
         .tile.colored > * { position:relative; }
         .tile-top { display:flex; align-items:center; justify-content:space-between; gap: 8px; }
-        .tile-name { font-weight: 800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .tile-status { display:flex; gap:6px; align-items:center; font-weight:700; opacity:.85; }
-        .tile-val { font-weight: 900; font-size: 18px; line-height:1; }
-        .tile-unit { font-size: 12px; opacity:.7; margin-top:2px; }
+        .tile-name { font-weight: var(--jp2-aqi-name-weight, 800); font-size: var(--jp2-aqi-name-size, inherit); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .tile-status { display:flex; gap:6px; align-items:center; font-weight: var(--jp2-aqi-status-weight, 700); font-size: var(--jp2-aqi-status-size, inherit); opacity:.85; }
+        .tile-val { font-weight: var(--jp2-aqi-value-weight, 900); font-size: var(--jp2-aqi-value-size, 18px); line-height:1; }
+        .tile-unit { font-weight: var(--jp2-aqi-unit-weight, 600); font-size: var(--jp2-aqi-unit-size, 12px); opacity:.7; margin-top:2px; }
       </style>
 
       <ha-card>
@@ -942,6 +1075,34 @@ class Jp2AirQualityCard extends HTMLElement {
         card.style.setProperty("--jp2-secondary-state-size", `${c.secondary_state_size}px`);
         card.style.setProperty("--jp2-bar-width", `${c.bar?.width ?? 92}%`);
         card.style.setProperty("--jp2-bar-height", `${c.bar?.height ?? 6}px`);
+        const setOrClear = (prop, value) => {
+          if (value === null || value === undefined || value === "" || Number(value) === 0) card.style.removeProperty(prop);
+          else card.style.setProperty(prop, value);
+        };
+
+        // Bar opacity (0..100)
+        const barOpacity = clamp(Number(c.bar?.opacity ?? 100), 0, 100) / 100;
+        card.style.setProperty("--jp2-bar-opacity", String(barOpacity));
+
+        // AQI typography (0 = auto)
+        const aqiNameSize = Number(c.aqi_text_name_size || 0);
+        const aqiNameWeight = Number(c.aqi_text_name_weight || 0);
+        const aqiValueSize = Number(c.aqi_text_value_size || 0);
+        const aqiValueWeight = Number(c.aqi_text_value_weight || 0);
+        const aqiUnitSize = Number(c.aqi_text_unit_size || 0);
+        const aqiUnitWeight = Number(c.aqi_text_unit_weight || 0);
+        const aqiStatusSize = Number(c.aqi_text_status_size || 0);
+        const aqiStatusWeight = Number(c.aqi_text_status_weight || 0);
+
+        setOrClear("--jp2-aqi-name-size", aqiNameSize ? `${aqiNameSize}px` : 0);
+        setOrClear("--jp2-aqi-name-weight", aqiNameWeight ? String(aqiNameWeight) : 0);
+        setOrClear("--jp2-aqi-value-size", aqiValueSize ? `${aqiValueSize}px` : 0);
+        setOrClear("--jp2-aqi-value-weight", aqiValueWeight ? String(aqiValueWeight) : 0);
+        setOrClear("--jp2-aqi-unit-size", aqiUnitSize ? `${aqiUnitSize}px` : 0);
+        setOrClear("--jp2-aqi-unit-weight", aqiUnitWeight ? String(aqiUnitWeight) : 0);
+        setOrClear("--jp2-aqi-status-size", aqiStatusSize ? `${aqiStatusSize}px` : 0);
+        setOrClear("--jp2-aqi-status-weight", aqiStatusWeight ? String(aqiStatusWeight) : 0);
+
         card.style.setProperty("--jp2-knob-size", `${c.knob_size}px`);
         card.style.setProperty("--jp2-graph-height", `${c.graph_height}px`);
 
@@ -1364,7 +1525,7 @@ if (c.show_knob !== false && value !== null) {
         if (c.aqi_show_sensor_value !== false || c.aqi_show_sensor_unit !== false) {
           right.appendChild(el("div", { class: "val" }, [
             c.aqi_show_sensor_value === false ? null : document.createTextNode(r.value !== null ? this._formatValue(r.preset, r.value) : "—"),
-            c.aqi_show_sensor_unit === false ? null : el("span", { style: { marginLeft: "6px", opacity: ".7", fontWeight: "600" } }, [r.unit]),
+            c.aqi_show_sensor_unit === false ? null : el("span", { class: "aqi-unit" }, [r.unit]),
           ]));
         }
         if (c.aqi_show_sensor_status !== false) {
@@ -1417,27 +1578,51 @@ class Jp2AirQualityCardEditor extends HTMLElement {
   }
 
   setConfig(config) {
-    const stub = Jp2AirQualityCard.getStubConfig();
-    const raw = normalizeMultiModeConfig(config);
-    const merged = {
-      ...stub,
-      ...raw,
-      bar: { ...(stub.bar || {}), ...deepClone((raw && raw.bar) || {}) },
-    };
+    try {
+      const stub = Jp2AirQualityCard.getStubConfig();
+      const raw = normalizeMultiModeConfig(config);
+      const merged = {
+        ...stub,
+        ...raw,
+        bar: { ...(stub.bar || {}), ...deepClone((raw && raw.bar) || {}) },
+      };
 
-    merged.card_mode = String(merged.card_mode || "sensor");
-    merged.preset = String(merged.preset || "radon");
-    merged.graph_color_mode = String(merged.graph_color_mode || "segments");
-    merged.graph_position = String(merged.graph_position || "below_top");
-    merged.aqi_layout = String(merged.aqi_layout || "vertical");
+      merged.card_mode = String(merged.card_mode || "sensor");
+      merged.preset = String(merged.preset || "radon");
+      merged.graph_color_mode = String(merged.graph_color_mode || "segments");
+      merged.graph_position = String(merged.graph_position || "below_top");
+      merged.aqi_layout = String(merged.aqi_layout || "vertical");
 
-    merged.aqi_entities = Array.isArray(merged.aqi_entities) ? merged.aqi_entities : [];
-    merged.aqi_overrides = merged.aqi_overrides && typeof merged.aqi_overrides === "object" ? merged.aqi_overrides : {};
+      merged.aqi_entities = Array.isArray(merged.aqi_entities) ? merged.aqi_entities : [];
+      merged.aqi_overrides = merged.aqi_overrides && typeof merged.aqi_overrides === "object" ? merged.aqi_overrides : {};
 
-    this._config = merged;
+      // Fix: clean any legacy dotted keys like "bar.width" from YAML
+      jp2NormalizeDottedRootKeys(merged, ["bar"]);
 
-    this._ensureUI();
-    this._render();
+      this._config = merged;
+
+      this._ensureUI();
+      this._render();
+    } catch (err) {
+      console.warn(`[${CARD_NAME}] editor setConfig failed`, err);
+      try { this._ensureUI(); } catch (_) {}
+      const content = this.shadowRoot?.getElementById("content");
+      if (content) {
+        content.innerHTML = `
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="h">Erreur</div>
+                <div class="p">Impossible de charger l’éditeur visuel. Ouvre la console pour le détail.</div>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="muted">${_jp2EscapeHtml(String(err && err.message ? err.message : err))}</div>
+            </div>
+          </div>
+        `;
+      }
+    }
   }
 
   get _isAqi() {
@@ -1663,7 +1848,7 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         { id: "general", label: "Général" },
         { id: "aqi_entities", label: "Entités" },
         { id: "aqi_layout", label: "Disposition" },
-        { id: "aqi_icons", label: "Icônes" },
+        { id: "aqi_icons", label: "Contenu" },
         { id: "aqi_overrides", label: "Overrides" },
       ];
     }
@@ -1783,6 +1968,11 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         this._makeForm(this._schemaAqiRowDisplay(), this._config)
       ));
       root.appendChild(this._section(
+        "Typographie",
+        "Taille et épaisseur des textes (0 = auto).",
+        this._makeForm(this._schemaAqiTypography(), this._config)
+      ));
+      root.appendChild(this._section(
         "Style des icônes",
         "Taille du cercle, taille du pictogramme, fond et cercle.",
         this._makeForm(this._schemaAqiIconStyle(), this._config)
@@ -1824,8 +2014,11 @@ class Jp2AirQualityCardEditor extends HTMLElement {
   _makeForm(schema, data) {
     const form = document.createElement("ha-form");
     form.hass = this._hass;
-    form.schema = schema;
-    form.data = data;
+
+    const norm = normalizeHaFormSchema(schema);
+    form.schema = norm;
+    form.data = jp2BuildHaFormData(norm, data);
+
     form.computeLabel = (s) => this._computeLabel(s);
     form.computeHelper = (s) => this._computeHelper(s);
 
@@ -1834,7 +2027,8 @@ class Jp2AirQualityCardEditor extends HTMLElement {
   }
 
     _computeLabel(s) {
-    const n = s?.name || "";
+    const n = String(s?.name || "");
+    const key = n.startsWith("bar.") ? n.slice(4) : n;
     const map = {
       // general
       card_mode: "Type de carte",
@@ -1909,17 +2103,27 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       aqi_show_sensor_value: "Afficher la valeur",
       aqi_show_sensor_unit: "Afficher l'unité",
       aqi_show_sensor_status: "Afficher le statut",
+      // AQI typography
+      aqi_text_name_size: "Nom : taille (px)",
+      aqi_text_name_weight: "Nom : épaisseur",
+      aqi_text_value_size: "Valeur : taille (px)",
+      aqi_text_value_weight: "Valeur : épaisseur",
+      aqi_text_unit_size: "Unité : taille (px)",
+      aqi_text_unit_weight: "Unité : épaisseur",
+      aqi_text_status_size: "Statut : taille (px)",
+      aqi_text_status_weight: "Statut : épaisseur",
       // AQI icons
       aqi_icon_size: "Taille icône (cercle)",
       aqi_icon_inner_size: "Taille pictogramme",
       aqi_icon_background: "Fond icône",
       aqi_icon_circle: "Cercle icône",
     };
-    return map[n] || n;
+    return map[n] || map[key] || key;
   }
 
   _computeHelper(s) {
-    const n = s?.name || "";
+    const n = String(s?.name || "");
+    const key = n.startsWith("bar.") ? n.slice(4) : n;
     const map = {
       graph_color: "Ex: #03a9f4 (laisse vide pour auto).",
       graph_warn_color: "Couleur pour la zone warn (pics/segments).",
@@ -1927,25 +2131,40 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       good: "Couleur du statut “Bon”.",
       warn: "Couleur du statut “Moyen”.",
       bad: "Couleur du statut “Mauvais”.",
+      opacity: "Opacité de la barre en % (100 = opaque, 0 = invisible).",
       aqi_entities: "Tu peux sélectionner plusieurs entités.",
       aqi_tile_transparent: "Si activé, supprime le fond gris des tuiles (bordure uniquement).",
       aqi_tile_outline_transparent: "Si activé, supprime aussi la bordure des tuiles (aucun contour).",
       aqi_title_icon: "Optionnel : icône affichée à gauche du titre en mode AQI.",
       aqi_tiles_icons_only: "Uniquement en disposition horizontale : n’affiche que l’icône de chaque capteur.",
+      aqi_text_name_size: "0 = auto (taille par défaut).",
+      aqi_text_name_weight: "0 = auto. Valeurs usuelles : 400 / 600 / 700 / 800 / 900.",
+      aqi_text_value_size: "0 = auto.",
+      aqi_text_value_weight: "0 = auto.",
+      aqi_text_unit_size: "0 = auto.",
+      aqi_text_unit_weight: "0 = auto.",
+      aqi_text_status_size: "0 = auto.",
+      aqi_text_status_weight: "0 = auto.",
     };
-    return map[n] || "";
+    return map[n] || map[key] || "";
   }
 
 _onFormValueChanged(ev) {
     if (!this._config) return;
+    const prev = this._config;
     const value = ev.detail?.value || {};
-    // ha-form renvoie généralement un objet complet si data = config.
-    // On sécurise quand même (bar nested).
+    // ha-form peut renvoyer des clés "bar.xxx" (dot) : on reconstruit un objet propre.
+    const collapsed = jp2CollapseHaFormValue(value);
+
     const next = {
       ...this._config,
-      ...value,
-      bar: { ...(this._config.bar || {}), ...(value.bar || {}) },
+      ...collapsed,
+      bar: { ...(this._config.bar || {}), ...((collapsed && collapsed.bar) || {}) },
     };
+
+    // Sécurité : ne jamais conserver de clés racines du type "bar.width"
+    jp2NormalizeDottedRootKeys(next, ["bar"]);
+
 
     // Normalisation soft
     next.card_mode = String(next.card_mode || "sensor");
@@ -1965,12 +2184,16 @@ _onFormValueChanged(ev) {
     this._config = next;
 
     // Throttle la notification HA (évite boucle / reflow)
+    const modeChanged = String(prev?.card_mode || "sensor") !== String(next.card_mode || "sensor");
+
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = requestAnimationFrame(() => {
       this._raf = null;
       this._fireConfigChanged(this._config);
-      // Re-render si changement de mode ou tab invalide
-      this._render();
+
+      // IMPORTANT: ne pas re-render à chaque caractère (sinon perte du focus)
+      if (modeChanged) this._render();
+      else this._renderAqiPreview();
     });
   }
 
@@ -2087,6 +2310,7 @@ _onFormValueChanged(ev) {
           // bar geometry
           { name: "width", selector: { number: { min: 50, max: 100, mode: "box", step: 1 } }, path: "bar" },
           { name: "height", selector: { number: { min: 4, max: 18, mode: "box", step: 1 } }, path: "bar" },
+          { name: "opacity", selector: { number: { min: 0, max: 100, mode: "box", step: 1 } }, path: "bar" },
           { name: "align", selector: { select: { options: [
             { label: "Centré", value: "center" },
             { label: "Gauche", value: "left" },
@@ -2113,6 +2337,7 @@ _onFormValueChanged(ev) {
           { name: "bad", selector: { text: {} }, path: "bar" },
           { name: "width", selector: { number: { min: 50, max: 100, mode: "box", step: 1 } }, path: "bar" },
           { name: "height", selector: { number: { min: 4, max: 18, mode: "box", step: 1 } }, path: "bar" },
+          { name: "opacity", selector: { number: { min: 0, max: 100, mode: "box", step: 1 } }, path: "bar" },
           { name: "align", selector: { select: { options: [
             { label: "Centré", value: "center" },
             { label: "Gauche", value: "left" },
@@ -2288,6 +2513,26 @@ _onFormValueChanged(ev) {
       { name: "aqi_icon_inner_size", selector: { number: { min: 10, max: 60, mode: "box", step: 1 } } },
       { name: "aqi_icon_background", selector: { boolean: {} } },
       { name: "aqi_icon_circle", selector: { boolean: {} } },
+    ];
+  }
+
+
+
+  _schemaAqiTypography() {
+    return [
+      {
+        type: "grid", name: "", flatten: true, column_min_width: "220px",
+        schema: [
+          { name: "aqi_text_name_size", selector: { number: { min: 0, max: 40, mode: "box", step: 1 } } },
+          { name: "aqi_text_name_weight", selector: { number: { min: 0, max: 900, mode: "box", step: 100 } } },
+          { name: "aqi_text_value_size", selector: { number: { min: 0, max: 60, mode: "box", step: 1 } } },
+          { name: "aqi_text_value_weight", selector: { number: { min: 0, max: 900, mode: "box", step: 100 } } },
+          { name: "aqi_text_unit_size", selector: { number: { min: 0, max: 40, mode: "box", step: 1 } } },
+          { name: "aqi_text_unit_weight", selector: { number: { min: 0, max: 900, mode: "box", step: 100 } } },
+          { name: "aqi_text_status_size", selector: { number: { min: 0, max: 40, mode: "box", step: 1 } } },
+          { name: "aqi_text_status_weight", selector: { number: { min: 0, max: 900, mode: "box", step: 100 } } },
+        ],
+      },
     ];
   }
 
@@ -2490,6 +2735,9 @@ _onFormValueChanged(ev) {
   _fireConfigChanged(cfg) {
     const cleaned = deepClone(cfg);
 
+    // Fix: supprime les clés racines du type "bar.width" si présentes
+    jp2NormalizeDottedRootKeys(cleaned, ["bar"]);
+
     // Nettoyage des overrides vides / null
     if (cleaned.aqi_overrides && typeof cleaned.aqi_overrides === "object") {
       for (const [eid, ov] of Object.entries(cleaned.aqi_overrides)) {
@@ -2514,6 +2762,9 @@ _onFormValueChanged(ev) {
 
 try {
   if (!customElements.get("jp2-air-quality-editor")) customElements.define("jp2-air-quality-editor", Jp2AirQualityCardEditor);
+
+  // Backward compatibility (older editor tag)
+  if (!customElements.get("jp2-air-quality-card-editor")) customElements.define("jp2-air-quality-card-editor", Jp2AirQualityCardEditor);
 } catch (e) {
   // évite que le chargement du fichier casse tout si déjà défini
   console.warn(`[${CARD_NAME}] editor already defined or failed to define`, e);
@@ -2521,11 +2772,16 @@ try {
 
 try {
   if (!customElements.get(CARD_TYPE)) customElements.define(CARD_TYPE, Jp2AirQualityCard);
+
+  // Backward compatibility (older card type)
+  const LEGACY_CARD_TYPE = "jp2-air-quality-card";
+  if (!customElements.get(LEGACY_CARD_TYPE)) customElements.define(LEGACY_CARD_TYPE, Jp2AirQualityCard);
 } catch (e) {
   console.warn(`[${CARD_NAME}] card already defined or failed to define`, e);
 }
 
 window.customCards = window.customCards || [];
 window.customCards.push({ type: CARD_TYPE, name: CARD_NAME, description: CARD_DESC, version: CARD_VERSION });
+window.customCards.push({ type: "jp2-air-quality-card", name: CARD_NAME, description: CARD_DESC, version: CARD_VERSION });
 
 console.info(`%c ${CARD_NAME} %c v${CARD_VERSION} (${CARD_BUILD_DATE}) `, "color: white; background: #03a9f4; font-weight: 700;", "color: #03a9f4; background: white; font-weight: 700;");
