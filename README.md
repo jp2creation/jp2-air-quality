@@ -49,7 +49,7 @@ JP2 AAir Quality Card is available in [HACS][hacs] (Home Assistant Community Sto
 
 Use this link to directly go to the repository in HACS
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=piitaya&repository=JP2-Air-Quality-Card)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=jp2creation&repository=JP2-Air-Quality-Card)
 
 <br>
 
