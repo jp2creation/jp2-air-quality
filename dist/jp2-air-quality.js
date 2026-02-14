@@ -24,7 +24,7 @@
   - Feat: barre colorée — taille du contour du repère (épaisseur).
   - Feat: AQI — option “Air uniquement” (statut global ignore temp/humidité/pression).
   - Fix: AQI — détection preset améliorée (température/humidité/pression).
-  - Feat: AQI — image au-dessus du statut global (images différentes selon Bon/Moyen/Mauvais).*/
+  - Feat: AQI — icône SVG au-dessus du statut global (good/warn/bad) avec couleurs (statut/perso) + cercle/fond optionnels.*/
 
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
@@ -143,6 +143,36 @@ function cssColorMix(color, pct) {
   }
   return "transparent";
 }
+
+
+function jp2SvgToCurrentColor(svgText) {
+  let s = String(svgText || "");
+  // Remove fixed sizing so CSS can drive dimensions
+  s = s.replace(/\swidth="[^"]*"/g, "").replace(/\sheight="[^"]*"/g, "");
+  // Replace hard-coded fills with currentColor (keep fill="none")
+  s = s.replace(/fill="([^"]+)"/g, (m, v) => {
+    const vv = String(v || "").trim().toLowerCase();
+    if (vv === "none") return m;
+    return 'fill="currentColor"';
+  });
+  return s;
+}
+
+const JP2_AQI_GLOBAL_SVG_RAW = {
+  good: `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><g fill="none" fill-rule="evenodd"><path d="M0 48h48V0H0z"/><g fill="#718B3A"><path d="M22.579 30.814c.512.148.986.22 1.447.22.46 0 .934-.072 1.447-.22a.378.378 0 0 0 .076-.693.373.373 0 0 0-.284-.03c-.89.257-1.586.257-2.477 0a.377.377 0 0 0-.21.724"/><path d="M40.139 24.513a1.36 1.36 0 0 0-.924-.238c.377-1.81.637-3.614.777-5.363.382-4.79-.863-8.887-3.6-11.849-2.92-3.158-7.437-4.97-12.392-4.97-1.258 0-2.374.124-3.007.242a8.88 8.88 0 0 1-.759-.438l-.051-.035a.19.19 0 0 0-.26.052l-.334.492a.187.187 0 0 0-.03.144c.01.05.04.094.082.12l.054.035c.856.561 1.79.983 2.561 1.157.875.197 1.311.622 1.493.858l.032.04a.19.19 0 0 0 .236.053l.532-.278a.188.188 0 0 0 .065-.277l-.042-.06c-.172-.24-.653-.795-1.595-1.132.342-.019.783-.033 1.023-.033 4.697 0 8.963 1.701 11.701 4.668 2.59 2.807 3.719 6.554 3.353 11.137a43.37 43.37 0 0 1-.944 6.087l-.051.27a.254.254 0 0 0 .247.3h.362a.255.255 0 0 0 .154-.054l.057-.045c.245-.187.546-.236.716-.115.343.242.35 1.053.019 2.064l-.335 1.03-.01.027c-.192.595-.39 1.21-.637 1.943-.389 1.152-1.092 1.899-1.898 2.024l.063-.145c.047-.11.095-.22.142-.336a.255.255 0 0 0-.143-.327l-.408-.16a.255.255 0 0 0-.324.141c-1.775 4.454-3.995 7.823-6.986 10.603-1.625 1.51-3.206 1.82-5.079 1.82-1.872 0-3.453-.31-5.079-1.821-2.992-2.78-5.211-6.149-6.985-10.602a.253.253 0 0 0-.326-.14l-.407.16a.252.252 0 0 0-.141.327c.046.116.094.227.142.338l.06.137c-.014-.002-.027-.003-.04-.006-.796-.146-1.472-.88-1.855-2.013-.243-.718-.438-1.322-.627-1.907l-.354-1.095c-.332-1.01-.325-1.82.018-2.062.175-.123.47-.073.734.129l.067.042c.046.028.1.04.15.038l.357-.024a.222.222 0 0 0 .114-.039c.031.014.087.01.133-.002.351-.088.698-.396.95-.843.41-.727.704-1.79 1.044-3.02.684-2.48 1.537-5.566 3.756-6.964 2.485-1.567 4.625-1.291 7.106-.971 2.38.306 5.074.652 8.572-.574l.08.052c.257 1.897 1.445 4.389 4.016 5.73a.376.376 0 1 0 .347-.668c-2.394-1.249-3.448-3.569-3.636-5.324a.38.38 0 0 0-.172-.278l-.387-.245a.37.37 0 0 0-.33-.037c-3.418 1.24-6.063.898-8.406.595-2.51-.321-4.882-.624-7.592 1.083-2.465 1.553-3.36 4.796-4.08 7.401-.327 1.182-.608 2.203-.973 2.85-.152.269-.312.403-.42.459a42.846 42.846 0 0 1-.89-5.833c-.743-9.32 4.854-13.079 8.257-14.49l.046-.019c.42.184.812.318 1.167.398.875.197 1.312.622 1.494.858l.032.041a.192.192 0 0 0 .236.052l.532-.278a.188.188 0 0 0 .065-.277l-.043-.06c-.209-.29-.832-.998-2.102-1.286-.658-.147-1.473-.518-2.235-1.015l-.05-.034a.188.188 0 0 0-.261.051l-.334.492a.187.187 0 0 0-.03.144c.01.05.04.094.083.122l.053.033c.111.073.226.141.338.207-5.757 2.681-8.739 8.19-8.185 15.136.138 1.736.4 3.54.778 5.363a1.354 1.354 0 0 0-.924.237c-.423.3-1.032 1.102-.37 3.124l.343 1.057c.193.597.393 1.216.641 1.95.668 1.98 2.005 2.685 3.034 2.685.05 0 .1-.005.15-.01l.008-.001c1.733 3.91 3.835 6.934 6.612 9.515 1.959 1.821 3.907 2.072 5.72 2.072 1.812 0 3.76-.25 5.72-2.071 2.776-2.582 4.879-5.606 6.612-9.516h.007c.05.006.101.01.152.01 1.028 0 2.365-.705 3.032-2.683.253-.748.453-1.364.652-1.982l.332-1.025c.664-2.023.054-2.826-.368-3.125"/><path d="M31.026 24.643c0-.515-.689-.935-1.536-.935-.846 0-1.534.42-1.534.935 0 .524.673.934 1.534.934.847 0 1.536-.42 1.536-.934m-12.539.934c.848 0 1.537-.42 1.537-.934 0-.515-.69-.935-1.537-.935-.846 0-1.535.42-1.535.935 0 .524.674.934 1.535.934m9.093 9.999c-.404 1.021-1.388 2.631-3.58 2.631-2.19 0-3.176-1.61-3.58-2.631h7.16zM24 38.96c2.524 0 3.963-1.89 4.467-3.658a.375.375 0 0 0-.362-.48h-8.21a.378.378 0 0 0-.363.48c.505 1.768 1.944 3.658 4.468 3.658zm7.942-16.711a.372.372 0 0 0-.002-.288.373.373 0 0 0-.206-.203 6.035 6.035 0 0 0-2.239-.437c-.959 0-1.752.241-2.249.443a.377.377 0 0 0 .142.725.37.37 0 0 0 .141-.028 5.305 5.305 0 0 1 1.966-.387c.837 0 1.526.208 1.958.383a.38.38 0 0 0 .49-.208m-11.494.211a.375.375 0 0 0 .488-.495.376.376 0 0 0-.205-.202 6.042 6.042 0 0 0-2.249-.442c-.955 0-1.745.238-2.24.438a.377.377 0 0 0 .284.698 5.277 5.277 0 0 1 1.956-.383c.837 0 1.53.21 1.966.386"/></g></g></svg>`,
+  warn: `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><g fill="none" fill-rule="evenodd"><path d="M0 48h48V0H0z"/><g fill="#B25826"><path d="M22.851 37.65a.377.377 0 0 0 0 .754h2.298a.376.376 0 0 0 0-.753h-2.298zm-.272-6.836c.513.148.986.22 1.448.22.46 0 .934-.072 1.446-.22a.378.378 0 0 0 .076-.693.372.372 0 0 0-.283-.03c-.892.257-1.587.257-2.479 0a.366.366 0 0 0-.283.03.372.372 0 0 0-.182.227.371.371 0 0 0 .032.287.373.373 0 0 0 .225.18m5.363 6.349a.375.375 0 0 0 .374-.418.374.374 0 0 0-.138-.252c-1.143-.92-2.496-1.387-4.025-1.387-1.53 0-2.883.466-4.026 1.387a.374.374 0 0 0-.057.53c.13.16.368.187.53.056 1.004-.81 2.2-1.22 3.553-1.22 1.353 0 2.548.41 3.553 1.22.068.055.15.084.236.084m4.072-14.527a.375.375 0 0 0 .324-.422.382.382 0 0 0-.423-.323c-1.588.21-3.277-.342-4.408-1.445a.378.378 0 0 0-.64.275.38.38 0 0 0 .114.265c1.093 1.065 2.686 1.702 4.262 1.702.259 0 .518-.018.771-.052M21.01 20.454a.373.373 0 0 0-.266-.114h-.004a.374.374 0 0 0-.262.107c-1.13 1.103-2.816 1.658-4.408 1.444a.374.374 0 0 0-.423.324.377.377 0 0 0 .324.422c.254.034.514.052.771.052 1.577 0 3.17-.637 4.263-1.703a.377.377 0 0 0 .005-.532m10.016 4.189c0-.515-.689-.935-1.536-.935-.846 0-1.534.42-1.534.935 0 .524.673.934 1.534.934.847 0 1.536-.42 1.536-.934m-12.539.934c.848 0 1.537-.42 1.537-.934 0-.515-.69-.935-1.537-.935-.846 0-1.534.42-1.534.935 0 .524.674.934 1.534.934"/><path d="M40.139 24.513a1.358 1.358 0 0 0-.924-.238c.377-1.81.637-3.614.777-5.363.382-4.79-.863-8.887-3.6-11.849-2.92-3.158-7.437-4.97-12.392-4.97-1.258 0-2.374.124-3.007.242a8.836 8.836 0 0 1-.759-.438l-.051-.035a.191.191 0 0 0-.26.052l-.334.492a.189.189 0 0 0 .053.265l.053.034c.856.561 1.79.983 2.561 1.157.875.197 1.311.622 1.493.858l.033.041a.19.19 0 0 0 .235.052l.531-.278a.191.191 0 0 0 .066-.278l-.042-.059c-.172-.24-.653-.795-1.595-1.132.342-.019.783-.033 1.022-.033 4.698 0 8.964 1.701 11.702 4.668 2.59 2.807 3.719 6.554 3.353 11.137a43.37 43.37 0 0 1-.944 6.087l-.051.27a.254.254 0 0 0 .247.3h.362a.255.255 0 0 0 .154-.054l.057-.045c.245-.187.546-.236.716-.115.343.242.35 1.053.019 2.064l-.335 1.03-.01.027c-.192.595-.39 1.21-.637 1.943-.389 1.152-1.092 1.899-1.898 2.024l.063-.145c.047-.11.095-.22.142-.336a.255.255 0 0 0-.143-.327l-.408-.16a.255.255 0 0 0-.324.141c-1.775 4.454-3.995 7.823-6.986 10.603-1.625 1.51-3.206 1.82-5.079 1.82-1.873 0-3.453-.31-5.078-1.821-2.993-2.78-5.212-6.15-6.985-10.602a.253.253 0 0 0-.326-.14l-.407.16a.25.25 0 0 0-.142.327c.046.116.094.227.143.338.02.046.04.09.058.137a.45.45 0 0 1-.039-.006c-.796-.146-1.472-.88-1.855-2.014a142.07 142.07 0 0 1-.628-1.911l-.353-1.09c-.333-1.01-.325-1.82.018-2.062.175-.123.47-.072.734.129l.067.042a.251.251 0 0 0 .15.038l.357-.024a.226.226 0 0 0 .114-.039.252.252 0 0 0 .133-.002c.352-.089.698-.396.95-.843.41-.727.704-1.79 1.044-3.019.684-2.48 1.537-5.566 3.756-6.965 2.486-1.568 4.627-1.291 7.106-.971 2.38.306 5.074.652 8.572-.574l.08.052c.257 1.897 1.445 4.389 4.016 5.73a.376.376 0 1 0 .347-.668c-2.394-1.249-3.448-3.569-3.636-5.324a.38.38 0 0 0-.172-.278l-.387-.245a.37.37 0 0 0-.33-.037c-3.418 1.24-6.063.898-8.406.595-2.512-.322-4.881-.625-7.592 1.083-2.466 1.554-3.361 4.796-4.08 7.401-.327 1.182-.608 2.203-.973 2.85-.153.27-.314.404-.42.46a42.807 42.807 0 0 1-.89-5.834c-.743-9.32 4.854-13.079 8.258-14.49a.635.635 0 0 1 .045-.019c.42.184.813.318 1.167.398.876.197 1.312.622 1.494.858l.032.041a.19.19 0 0 0 .236.052l.53-.277a.191.191 0 0 0 .097-.124.184.184 0 0 0-.03-.154l-.043-.06c-.208-.29-.831-.998-2.102-1.286-.658-.147-1.472-.518-2.235-1.015l-.05-.034a.19.19 0 0 0-.261.051l-.334.492a.189.189 0 0 0 .053.266l.053.033c.112.073.226.141.338.207-5.757 2.681-8.74 8.19-8.185 15.136a43.8 43.8 0 0 0 .777 5.363 1.361 1.361 0 0 0-.923.237c-.423.298-1.033 1.102-.37 3.124l.334 1.026c.209.648.402 1.245.65 1.982.668 1.978 2.005 2.684 3.034 2.684.05 0 .1-.005.15-.01l.008-.001c1.733 3.91 3.835 6.935 6.612 9.515 1.959 1.821 3.907 2.072 5.72 2.072 1.812 0 3.76-.25 5.72-2.071 2.776-2.58 4.878-5.605 6.611-9.516h.007c.05.006.101.01.153.01 1.028 0 2.365-.705 3.032-2.683.253-.748.453-1.364.652-1.982l.332-1.025c.664-2.023.054-2.826-.368-3.125"/></g></g></svg>`,
+  bad: `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><g fill="none" fill-rule="evenodd"><path d="M0 48h48V0H0z"/><g fill="#634675"><path d="M26.22 36.782a2.152 2.152 0 0 1-2.148 2.152 2.152 2.152 0 0 1 0-4.302 2.15 2.15 0 0 1 2.147 2.15m-2.147-2.9a2.9 2.9 0 0 0 0 5.802 2.901 2.901 0 0 0 0-5.802"/><path d="M27.889 36.914A3.696 3.696 0 0 1 24.2 40.61a3.696 3.696 0 0 1 0-7.389 3.695 3.695 0 0 1 3.688 3.694M24.2 32.471a4.445 4.445 0 0 0 0 8.888 4.445 4.445 0 0 0 0-8.888"/><path d="M38.206 36.981a.102.102 0 0 1-.007.08l-4.565 8.86a.104.104 0 0 1-.139.044l-1.017-.526 4.66-9.044 1.017.526a.102.102 0 0 1 .05.06zm-27.431-.06l1.017-.526 4.66 9.045-1.017.525a.107.107 0 0 1-.139-.044l-4.565-8.86a.105.105 0 0 1-.007-.08.105.105 0 0 1 .05-.06zm8.907 6.342c-.125.391-.393.71-.757.898l-1.808.935-4.66-9.044 1.808-.935a1.529 1.529 0 0 1 2.066.66l3.253 6.314c.188.364.223.78.098 1.172zm8.764-.213c-1.378.875-2.732.996-3.99.996-1.253 0-2.601-.12-3.975-.986a2.275 2.275 0 0 0-.232-1.313l-3.254-6.313c-.022-.044-.05-.083-.077-.123l-.018-.026c2.134-3.991 5.75-6.972 7.566-6.976 1.816.004 5.43 2.984 7.565 6.975l-.02.03a.976.976 0 0 0-.076.12l-3.254 6.313c-.205.4-.286.85-.235 1.303zm3.367 2.046l-1.808-.935a1.54 1.54 0 0 1-.659-2.07l3.253-6.314a1.525 1.525 0 0 1 1.364-.832c.246 0 .482.058.702.172l1.808.935-4.398 8.537-.262.507zm8.677-20.407a1.347 1.347 0 0 0-.918-.237c.374-1.802.633-3.597.771-5.337.38-4.767-.856-8.844-3.576-11.791-2.9-3.144-7.388-4.947-12.31-4.947-1.25 0-2.359.124-2.989.24-.29-.151-.53-.29-.753-.435l-.051-.034a.19.19 0 0 0-.258.051l-.332.49a.184.184 0 0 0-.03.141c.01.05.04.095.083.122l.053.034c.85.559 1.777.979 2.543 1.152.87.196 1.303.618 1.484.853l.032.041a.188.188 0 0 0 .234.052l.528-.277a.19.19 0 0 0 .066-.277l-.043-.058c-.17-.239-.648-.79-1.584-1.127.34-.018.778-.033 1.016-.033 4.667 0 8.904 1.694 11.624 4.646 2.574 2.793 3.695 6.522 3.332 11.083a43.229 43.229 0 0 1-.938 6.058l-.05.269a.248.248 0 0 0 .053.206.245.245 0 0 0 .192.091h.36a.255.255 0 0 0 .152-.053l.057-.044c.243-.187.542-.235.711-.115.34.241.348 1.048.02 2.054l-.347 1.066c-.19.588-.386 1.196-.63 1.92-.385 1.146-1.085 1.89-1.884 2.014.02-.05.041-.098.062-.146.047-.109.094-.218.14-.333a.253.253 0 0 0-.141-.325l-.407-.16a.253.253 0 0 0-.321.141c-.382.96-.795 1.884-1.258 2.816l-.023.03-.151-.079a2.256 2.256 0 0 0-1.74-.146c-.26.083-.5.21-.715.378a20.2 20.2 0 0 0-3.814-4.82c-1.611-1.482-3.127-2.3-4.277-2.303-1.143.003-2.66.822-4.27 2.304a20.203 20.203 0 0 0-3.815 4.82 2.263 2.263 0 0 0-.717-.379 2.255 2.255 0 0 0-1.739.146l-.151.078-.063-.078a36.789 36.789 0 0 1-1.238-2.767.25.25 0 0 0-.322-.14l-.406.16a.252.252 0 0 0-.14.326c.044.111.09.218.136.325l.064.147a.46.46 0 0 1-.04-.006c-.79-.145-1.462-.875-1.842-2.004-.24-.71-.433-1.309-.62-1.888l-.356-1.098c-.329-1.006-.321-1.812.02-2.053.173-.123.464-.072.729.128l.066.042a.244.244 0 0 0 .15.038l.354-.023a.235.235 0 0 0 .113-.04.25.25 0 0 0 .132-.002c.35-.088.693-.393.944-.838.408-.724.7-1.78 1.037-3.005.68-2.468 1.526-5.54 3.731-6.932 2.47-1.56 4.597-1.284 7.06-.966 2.365.304 5.04.649 8.516-.57l.08.051c.255 1.888 1.434 4.368 3.99 5.701a.375.375 0 0 0 .344-.664c-2.379-1.242-3.426-3.551-3.613-5.298a.377.377 0 0 0-.17-.276l-.384-.244a.369.369 0 0 0-.328-.037c-3.396 1.234-6.023.894-8.351.592-2.496-.32-4.851-.622-7.543 1.078-2.45 1.545-3.339 4.772-4.054 7.365-.324 1.176-.604 2.192-.967 2.836-.155.276-.318.409-.417.459A42.807 42.807 0 0 1 9.5 19.04c-.739-9.275 4.822-13.015 8.203-14.42l.045-.019c.418.184.808.317 1.16.397.87.196 1.303.619 1.484.853l.032.041a.19.19 0 0 0 .234.052l.527-.276a.19.19 0 0 0 .066-.277l-.042-.059c-.207-.289-.826-.994-2.089-1.28-.653-.147-1.462-.515-2.22-1.01l-.05-.034a.187.187 0 0 0-.259.051l-.332.49a.19.19 0 0 0 .052.263l.053.034c.111.073.225.14.337.205-5.72 2.669-8.683 8.152-8.132 15.063.137 1.73.397 3.526.772 5.337a1.358 1.358 0 0 0-.918.237c-.42.297-1.026 1.097-.366 3.108l.33 1.022c.198.614.396 1.228.647 1.972.663 1.97 1.992 2.671 3.014 2.671.05 0 .098-.005.146-.01h.01c.189.426.397.869.634 1.348l-2.492 1.288a1.044 1.044 0 0 0-.447 1.402l4.566 8.861a1.038 1.038 0 0 0 1.4.448l3.488-1.805c.411-.212.75-.532.986-.928 1.453.805 2.837.916 4.117.916 1.222 0 2.667-.11 4.129-.924.235.4.577.722.991.936l3.49 1.805a1.036 1.036 0 0 0 1.4-.448l4.565-8.86a1.043 1.043 0 0 0-.446-1.403l-2.508-1.295c.233-.472.44-.912.63-1.342l.012.001c.048.005.096.01.146.01 1.021 0 2.35-.702 3.013-2.671.254-.755.459-1.389.647-1.972l.33-1.02c.66-2.014.054-2.813-.365-3.11z"/><path d="M31.938 21.552a.375.375 0 0 0-.374-.376h-4.367a.374.374 0 0 0 0 .75h4.367a.374.374 0 0 0 .374-.374m-3.703 2.673c0 .521.67.929 1.525.929.841 0 1.526-.417 1.526-.929 0-.513-.685-.93-1.526-.93-.84 0-1.525.417-1.525.93m-6.885-2.673a.375.375 0 0 0-.374-.376h-4.367a.374.374 0 0 0 0 .75h4.367a.374.374 0 0 0 .374-.374m-4.409 2.673c0 .521.67.929 1.525.929.841 0 1.526-.417 1.526-.929 0-.513-.685-.93-1.526-.93-.84 0-1.525.417-1.525.93"/></g></g></svg>`,
+};
+
+const JP2_AQI_GLOBAL_SVG = (() => {
+  const out = {};
+  for (const [k, v] of Object.entries(JP2_AQI_GLOBAL_SVG_RAW)) {
+    out[k] = jp2SvgToCurrentColor(v);
+  }
+  out.unknown = out.warn || out.good || "";
+  return out;
+})();
+
 
 function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj || {}));
@@ -427,14 +457,21 @@ class Jp2AirQualityCard extends HTMLElement {
       // AQI global
       aqi_air_only: false, // si true : le statut global ignore temp/humidité/pression etc.
 
-// AQI global image (optionnel) — affichée au-dessus du statut global
-aqi_global_image_enabled: false,
-aqi_global_image_size: 52, // hauteur (px)
-aqi_global_image_radius: 14, // arrondi (px)
-aqi_global_image_good: "",
-aqi_global_image_warn: "",
-aqi_global_image_bad: "",
-aqi_global_image_unknown: "",
+      // AQI global — SVG au-dessus du statut
+      aqi_global_svg_enabled: false,
+      aqi_global_svg_size: 52,
+      aqi_global_svg_color_mode: "status", // status | custom
+      aqi_global_svg_color: "",
+      aqi_global_svg_show_icon: true,
+      aqi_global_svg_background: true,
+      aqi_global_svg_background_color_mode: "status", // status | custom
+      aqi_global_svg_background_color: "",
+      aqi_global_svg_background_opacity: 12, // %
+      aqi_global_svg_circle: true,
+      aqi_global_svg_circle_width: 1,
+      aqi_global_svg_circle_color_mode: "status", // status | custom
+      aqi_global_svg_circle_color: "",
+
 
       aqi_background_enabled: false,
       aqi_layout: "vertical", // vertical | horizontal
@@ -705,37 +742,6 @@ aqi_global_image_unknown: "",
           },
         ],
       },
-{
-  type: "expandable",
-  name: "aqi_global_image",
-  title: "AQI — Image du statut global",
-  flatten: true,
-  schema: [
-    {
-      type: "grid",
-      name: "",
-      flatten: true,
-      column_min_width: "240px",
-      schema: [
-        { name: "aqi_global_image_enabled", selector: { boolean: {} } },
-        { name: "aqi_global_image_size", selector: { number: { min: 16, max: 220, mode: "box", step: 1 } } },
-        { name: "aqi_global_image_radius", selector: { number: { min: 0, max: 40, mode: "box", step: 1 } } },
-      ],
-    },
-    {
-      type: "grid",
-      name: "",
-      flatten: true,
-      column_min_width: "240px",
-      schema: [
-        { name: "aqi_global_image_good", selector: { text: {} } },
-        { name: "aqi_global_image_warn", selector: { text: {} } },
-        { name: "aqi_global_image_bad", selector: { text: {} } },
-        { name: "aqi_global_image_unknown", selector: { text: {} } },
-      ],
-    },
-  ],
-},
       {
         type: "expandable",
         name: "colors",
@@ -814,13 +820,6 @@ aqi_global_image_unknown: "",
       aqi_show_title: "Afficher le titre",
       aqi_show_global: "Afficher le statut global",
       aqi_air_only: "Air uniquement",
-aqi_global_image_enabled: "Image au-dessus du statut global",
-aqi_global_image_size: "Hauteur image (px)",
-aqi_global_image_radius: "Arrondi image (px)",
-aqi_global_image_good: "Image (Bon)",
-aqi_global_image_warn: "Image (Moyen)",
-aqi_global_image_bad: "Image (Mauvais)",
-aqi_global_image_unknown: "Image (Inconnu)",
       aqi_show_sensors: "Afficher la liste des capteurs",
       aqi_background_enabled: "Fond coloré (AQI)",
     };
@@ -829,13 +828,6 @@ aqi_global_image_unknown: "Image (Inconnu)",
       aqi_entities: "Ajoute plusieurs capteurs (CO₂, VOC/TVOC, PM2.5, Radon...). Un statut Bon/Moyen/Mauvais est calculé pour chacun.",
       aqi_title_icon: "Optionnel : une icône affichée à gauche du titre en mode AQI.",
       aqi_air_only: "Si activé, le statut global ignore température/humidité/pression et ne considère que CO₂/VOC/PM/Radon.",
-aqi_global_image_enabled: "Affiche une image au-dessus du statut global (image choisie selon Bon/Moyen/Mauvais).",
-aqi_global_image_size: "Hauteur de l’image en px (ex: 52).",
-aqi_global_image_radius: "Arrondi des coins de l’image en px.",
-aqi_global_image_good: "Chemin/URL de l’image quand le statut global est Bon (good).",
-aqi_global_image_warn: "Chemin/URL de l’image quand le statut global est Moyen (warn).",
-aqi_global_image_bad: "Chemin/URL de l’image quand le statut global est Mauvais (bad).",
-aqi_global_image_unknown: "Chemin/URL de l’image si statut global inconnu.",
       graph_color: "Ex: var(--primary-color) ou #00bcd4. Vide = couleur du thème.",
       graph_warn_color: "Vide = couleur orange de la barre.",
       graph_bad_color: "Vide = couleur rouge de la barre.",
@@ -874,14 +866,6 @@ aqi_global_image_unknown: "Chemin/URL de l’image si statut global inconnu.",
 
     merged.aqi_title_icon = String(merged.aqi_title_icon || "");
     merged.aqi_air_only = !!merged.aqi_air_only;
-merged.aqi_global_image_enabled = !!merged.aqi_global_image_enabled;
-merged.aqi_global_image_size = clamp(Number(merged.aqi_global_image_size ?? 52), 16, 220);
-merged.aqi_global_image_radius = clamp(Number(merged.aqi_global_image_radius ?? 14), 0, 40);
-merged.aqi_global_image_good = String(merged.aqi_global_image_good || "");
-merged.aqi_global_image_warn = String(merged.aqi_global_image_warn || "");
-merged.aqi_global_image_bad = String(merged.aqi_global_image_bad || "");
-merged.aqi_global_image_unknown = String(merged.aqi_global_image_unknown || "");
-
     merged.aqi_tile_transparent = !!merged.aqi_tile_transparent;
     merged.aqi_entities = Array.isArray(merged.aqi_entities) ? merged.aqi_entities : [];
     merged.aqi_overrides = merged.aqi_overrides && typeof merged.aqi_overrides === "object" ? merged.aqi_overrides : {};
@@ -975,9 +959,6 @@ merged.aqi_global_image_unknown = String(merged.aqi_global_image_unknown || "");
       String(!!c?.aqi_show_sensors),
       String(!!c?.aqi_show_global),
       String(!!c?.aqi_air_only),
-String(!!c?.aqi_global_image_enabled),
-String(c?.aqi_global_image_size || ""),
-String(c?.aqi_global_image_radius || ""),
       String(!!c?.aqi_show_title),
       String(c?.aqi_title_icon || ""),
       String(!!c?.aqi_show_sensor_icon),
@@ -1355,9 +1336,13 @@ String(c?.aqi_global_image_radius || ""),
         .aqi-head { display:flex; align-items:baseline; justify-content:space-between; gap: 10px; }
         .aqi-title { font-weight: 800; display:flex; align-items:center; gap: 8px; }
         .aqi-title ha-icon { --mdc-icon-size: 18px; opacity: .9; }
-        .aqi-global { font-weight: 700; opacity:.85; display:flex; gap:8px; align-items:center; }
-.aqi-global-wrap { display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
-.aqi-global-image { display:block; height: var(--jp2-aqi-global-image-size, 52px); max-width: 220px; object-fit: contain; border-radius: var(--jp2-aqi-global-image-radius, 14px); }
+        .aqi-global { font-weight: 700; opacity:.85; display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+        .aqi-global-status { display:flex; gap:8px; align-items:center; }
+        .aqi-global-icon { width: var(--jp2-aqi-global-size, 52px); height: var(--jp2-aqi-global-size, 52px); display:flex; align-items:center; justify-content:center; position:relative; }
+        .aqi-global-icon-bg { position:absolute; inset:0; border-radius:999px; background: var(--jp2-aqi-global-bg, var(--primary-color)); opacity: var(--jp2-aqi-global-bg-opacity, .12); }
+        .aqi-global-icon-circle { position:absolute; inset:0; border-radius:999px; border: var(--jp2-aqi-global-circle-w, 1px) solid var(--jp2-aqi-global-circle, var(--divider-color, rgba(0,0,0,.12))); opacity: var(--jp2-aqi-global-circle-opacity, 1); }
+        .aqi-global-svg { width: 100%; height: 100%; display:flex; align-items:center; justify-content:center; color: var(--jp2-aqi-global-icon, var(--primary-text-color)); }
+        .aqi-global-svg svg { width: 78%; height: 78%; display:block; }
         .dot { width:10px; height:10px; border-radius:999px; background: var(--jp2-status-color); box-shadow: 0 0 0 1px rgba(255,255,255,.9), 0 0 0 2px rgba(0,0,0,.20); }
 
         .aqi-list { display:flex; flex-direction:column; gap: 8px; margin-top: 8px; }
@@ -1470,8 +1455,6 @@ String(c?.aqi_global_image_radius || ""),
 
         card.style.setProperty("--jp2-aqi-cols", String(clamp(Number(c.aqi_tiles_per_row || 3), 1, 6)));
         card.style.setProperty("--jp2-aqi-tile-radius", `${clamp(Number(c.aqi_tile_radius ?? 16), 0, 40)}px`);
-card.style.setProperty("--jp2-aqi-global-image-size", `${clamp(Number(c.aqi_global_image_size ?? 52), 16, 220)}px`);
-card.style.setProperty("--jp2-aqi-global-image-radius", `${clamp(Number(c.aqi_global_image_radius ?? 14), 0, 40)}px`);
       }
 
       if (String(c.card_mode) === "aqi") {
@@ -1751,20 +1734,104 @@ card.style.setProperty("--jp2-aqi-global-image-radius", `${clamp(Number(c.aqi_gl
     this._historyInflight.set(key, p);
     return await p;
   }
-_aqiGlobalImageForLevel(level) {
-  const c = this._config || {};
-  const pick = (k) => {
-    const v = c && Object.prototype.hasOwnProperty.call(c, k) ? c[k] : "";
-    return (v === null || v === undefined) ? "" : String(v).trim();
-  };
-  const map = {
-    good: pick("aqi_global_image_good"),
-    warn: pick("aqi_global_image_warn"),
-    bad: pick("aqi_global_image_bad"),
-    unknown: pick("aqi_global_image_unknown"),
-  };
-  return map[String(level || "unknown")] || map.unknown || "";
-}
+
+
+  _jp2NormAqiColorMode(raw) {
+    const v = String(raw ?? "status").trim().toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[_\-]+/g, " ")
+      .replace(/\s+/g, " ");
+    if (v === "custom" || v === "perso" || v === "personnel" || v === "personal") return "custom";
+    if (v === "status" || v === "statut" || v === "couleur statut" || v === "status color" || v === "status_color") return "status";
+    return "status";
+  }
+
+  _jp2PickAqiColor(mode, customColor, statusColor) {
+    const m = this._jp2NormAqiColorMode(mode);
+    const cc = String(customColor || "").trim();
+    if (m === "custom" && cc) return cc;
+    return statusColor;
+  }
+
+  _buildAqiGlobalSvg(level, statusColor) {
+    const c = this._config || {};
+    if (!c.aqi_global_svg_enabled) return null;
+
+    const l = (level === "good" || level === "warn" || level === "bad") ? level : "unknown";
+    const svg = (JP2_AQI_GLOBAL_SVG && JP2_AQI_GLOBAL_SVG[l]) ? JP2_AQI_GLOBAL_SVG[l] : (JP2_AQI_GLOBAL_SVG?.unknown || "");
+    if (!svg) return null;
+
+    const size = clamp(Number(c.aqi_global_svg_size ?? 52), 18, 140);
+    const iconColor = this._jp2PickAqiColor(c.aqi_global_svg_color_mode, c.aqi_global_svg_color, statusColor);
+
+    const wrap = el("div", {
+      class: "aqi-global-icon",
+      style: {
+        width: `${size}px`,
+        height: `${size}px`,
+        "--jp2-aqi-global-size": `${size}px`,
+      }
+    });
+
+    // Background (cercle)
+    if (c.aqi_global_svg_background !== false) {
+      const bgColor = this._jp2PickAqiColor(
+        c.aqi_global_svg_background_color_mode,
+        c.aqi_global_svg_background_color,
+        statusColor
+      );
+      const bgOp = clamp(Number(c.aqi_global_svg_background_opacity ?? 12), 0, 100) / 100;
+      const bg = el("div", { class: "aqi-global-icon-bg", style: { background: bgColor, opacity: String(bgOp) } });
+      wrap.appendChild(bg);
+    }
+
+    // Circle (contour)
+    if (c.aqi_global_svg_circle !== false) {
+      let circleColor = this._jp2PickAqiColor(
+        c.aqi_global_svg_circle_color_mode,
+        c.aqi_global_svg_circle_color,
+        statusColor
+      );
+      let circleOpacity = 1;
+
+      // Si mode "status" et pas de couleur custom, on reproduit le comportement des icônes (outline doux).
+      const mode = this._jp2NormAqiColorMode(c.aqi_global_svg_circle_color_mode);
+      const hasCustom = String(c.aqi_global_svg_circle_color || "").trim().length > 0;
+      if (mode === "status" && !hasCustom) {
+        const outline = cssColorMix(statusColor, 35);
+        if (outline && outline !== "transparent") {
+          circleColor = outline;
+        } else {
+          // Fallback Safari/vars: on garde la couleur statut + opacité plus faible
+          circleColor = statusColor;
+          circleOpacity = 0.35;
+        }
+      }
+
+      const w = clamp(Number(c.aqi_global_svg_circle_width ?? 1), 0, 10);
+      const circle = el("div", {
+        class: "aqi-global-icon-circle",
+        style: { borderColor: circleColor, borderWidth: `${w}px`, opacity: String(circleOpacity) }
+      });
+      wrap.appendChild(circle);
+    }
+
+    // SVG icon
+    if (c.aqi_global_svg_show_icon !== false) {
+      const holder = el("div", { class: "aqi-global-svg", style: { color: iconColor } });
+      holder.innerHTML = svg;
+      const svgEl = holder.querySelector("svg");
+      if (svgEl) {
+        svgEl.setAttribute("aria-hidden", "true");
+        svgEl.setAttribute("focusable", "false");
+        svgEl.style.pointerEvents = "none";
+      }
+      wrap.appendChild(holder);
+    }
+
+    return wrap;
+  }
+
 
   _renderAQICard() {
     const c = this._config;
@@ -1841,20 +1908,23 @@ _aqiGlobalImageForLevel(level) {
       kids.push(el("span", {}, [c.aqi_title || "AQI"]));
       return el("div", { class: "aqi-title" }, kids);
     })();
-        const globalRow = (c.aqi_show_global === false) ? null : el("div", { class: "aqi-global" }, [
-          el("span", { class: "dot", style: { background: globalColor } }),
-          el("span", {}, [globalLabel]),
-        ]);
-    
-        const imgSrc = (c.aqi_show_global === false || !c.aqi_global_image_enabled) ? "" : this._aqiGlobalImageForLevel(globalLevel);
-        const imgEl = imgSrc ? el("img", { class: "aqi-global-image", src: imgSrc, alt: globalLabel, loading: "lazy", decoding: "async" }) : null;
-    
-        const globalWrap = (globalRow || imgEl) ? el("div", { class: "aqi-global-wrap" }, [imgEl, globalRow]) : null;
-    
-        const head = el("div", { class: "aqi-head" }, [
-          titleEl,
-          globalWrap,
-        ]);
+    const globalEl = (c.aqi_show_global === false) ? null : (() => {
+      const parts = [];
+      const svgEl = this._buildAqiGlobalSvg(globalLevel, globalColor);
+      if (svgEl) parts.push(svgEl);
+
+      parts.push(el("div", { class: "aqi-global-status" }, [
+        el("span", { class: "dot", style: { background: globalColor } }),
+        el("span", {}, [globalLabel]),
+      ]));
+
+      return el("div", { class: "aqi-global" }, parts);
+    })();
+
+    const head = el("div", { class: "aqi-head" }, [
+      titleEl,
+      globalEl,
+    ]);
 
     const layout = String(c.aqi_layout || "vertical");
     const iconsOnly = (layout === "horizontal") && !!c.aqi_tiles_icons_only;
@@ -2013,14 +2083,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     merged.knob_color_mode = normalizeKnobColorMode(merged);
     if (merged.bar && Object.prototype.hasOwnProperty.call(merged.bar, "knob_color_mode")) delete merged.bar.knob_color_mode;
       merged.aqi_air_only = !!merged.aqi_air_only;
-      merged.aqi_global_image_enabled = !!merged.aqi_global_image_enabled;
-      merged.aqi_global_image_size = clamp(Number(merged.aqi_global_image_size ?? 52), 16, 220);
-      merged.aqi_global_image_radius = clamp(Number(merged.aqi_global_image_radius ?? 14), 0, 40);
-      merged.aqi_global_image_good = String(merged.aqi_global_image_good || "");
-      merged.aqi_global_image_warn = String(merged.aqi_global_image_warn || "");
-      merged.aqi_global_image_bad = String(merged.aqi_global_image_bad || "");
-      merged.aqi_global_image_unknown = String(merged.aqi_global_image_unknown || "");
-
 
       // Fix: clean any legacy dotted keys like "bar.width" from YAML
       jp2NormalizeDottedRootKeys(merged, ["bar"]);
@@ -2357,6 +2419,11 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         this._makeForm(this._schemaAqiGeneral(), this._config)
       ));
       root.appendChild(this._section(
+        "Statut global — Icône SVG",
+        "Optionnel : affiche une icône SVG au-dessus du statut global (Bon/Moyen/Mauvais). Couleurs = statut ou perso, avec cercle et fond optionnels.",
+        this._makeForm(this._schemaAqiGlobalSvg(), this._config)
+      ));
+      root.appendChild(this._section(
         "Aperçu rapide",
         "Clique sur une pastille pour ouvrir “Plus d’infos” sur le capteur.",
         this._aqiPreview()
@@ -2517,13 +2584,20 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       aqi_air_only: "Air uniquement",
       aqi_show_sensors: "Afficher les capteurs",
       aqi_background_enabled: "Fond coloré",
-aqi_global_image_enabled: "Image au-dessus du statut global",
-aqi_global_image_size: "Hauteur image (px)",
-aqi_global_image_radius: "Arrondi image (px)",
-aqi_global_image_good: "Image (Bon)",
-aqi_global_image_warn: "Image (Moyen)",
-aqi_global_image_bad: "Image (Mauvais)",
-aqi_global_image_unknown: "Image (Inconnu)",
+      // AQI global SVG
+      aqi_global_svg_enabled: "Icône SVG au-dessus du statut",
+      aqi_global_svg_size: "Taille SVG (px)",
+      aqi_global_svg_color_mode: "Couleur SVG",
+      aqi_global_svg_color: "Couleur SVG (perso)",
+      aqi_global_svg_show_icon: "Afficher le SVG",
+      aqi_global_svg_background: "Fond (cercle)",
+      aqi_global_svg_background_opacity: "Opacité fond (%)",
+      aqi_global_svg_background_color_mode: "Couleur fond",
+      aqi_global_svg_background_color: "Couleur fond (perso)",
+      aqi_global_svg_circle: "Cercle (contour)",
+      aqi_global_svg_circle_width: "Épaisseur cercle (px)",
+      aqi_global_svg_circle_color_mode: "Couleur cercle",
+      aqi_global_svg_circle_color: "Couleur cercle (perso)",
       // AQI entities / layout
       aqi_entities: "Entités (capteurs)",
       aqi_layout: "Disposition",
@@ -2574,16 +2648,22 @@ aqi_global_image_unknown: "Image (Inconnu)",
       aqi_entities: "Tu peux sélectionner plusieurs entités.",
       aqi_title_icon: "Optionnel : icône affichée à gauche du titre en mode AQI.",
       aqi_air_only: "Si activé, le statut global ignore température / humidité / pression. Seuls CO₂, VOC/TVOC, PM1/PM2.5 et Radon comptent.",
-aqi_global_image_enabled: "Affiche une image au-dessus du statut global (image choisie selon Bon/Moyen/Mauvais).",
-aqi_global_image_size: "Hauteur de l’image en px (ex: 52).",
-aqi_global_image_radius: "Arrondi des coins de l’image en px.",
-aqi_global_image_good: "Chemin/URL de l’image quand le statut global est Bon (good). Ex: /local/aqi/good.png",
-aqi_global_image_warn: "Chemin/URL de l’image quand le statut global est Moyen (warn).",
-aqi_global_image_bad: "Chemin/URL de l’image quand le statut global est Mauvais (bad).",
-aqi_global_image_unknown: "Chemin/URL de l’image si statut global inconnu.",
       aqi_tile_transparent: "Si activé, supprime le fond gris des tuiles (bordure uniquement).",
       aqi_tile_outline_transparent: "Si activé, supprime aussi la bordure des tuiles (aucun contour).",
       aqi_tiles_icons_only: "Uniquement en disposition horizontale : n’affiche que l’icône de chaque capteur.",
+      aqi_global_svg_enabled: "Affiche une icône SVG au-dessus du statut global (good/warn/bad).",
+      aqi_global_svg_size: "Taille de l’icône (px).",
+      aqi_global_svg_color_mode: "Couleur du SVG : statut ou personnalisée.",
+      aqi_global_svg_color: "Couleur CSS (ex: #ff0000). Laisse vide pour auto.",
+      aqi_global_svg_show_icon: "Masque uniquement le SVG (garde cercle/fond si activés).",
+      aqi_global_svg_background: "Fond du cercle derrière le SVG.",
+      aqi_global_svg_background_opacity: "Opacité du fond (0..100).",
+      aqi_global_svg_background_color_mode: "Couleur du fond : statut ou personnalisée.",
+      aqi_global_svg_background_color: "Couleur CSS du fond. Laisse vide pour auto.",
+      aqi_global_svg_circle: "Contour du cercle autour du SVG.",
+      aqi_global_svg_circle_width: "Épaisseur du contour (0 = pas de contour).",
+      aqi_global_svg_circle_color_mode: "Couleur du contour : statut ou personnalisée.",
+      aqi_global_svg_circle_color: "Couleur CSS du contour. Laisse vide pour auto.",
       aqi_text_name_size: "0 = auto (taille par défaut).",
       aqi_text_name_weight: "0 = auto. Valeurs usuelles : 400 / 600 / 700 / 800 / 900.",
       aqi_text_value_size: "0 = auto.",
@@ -2623,19 +2703,29 @@ aqi_global_image_unknown: "Chemin/URL de l’image si statut global inconnu.",
 
     next.aqi_title_icon = String(next.aqi_title_icon || "");
     next.aqi_air_only = !!next.aqi_air_only;
-next.aqi_global_image_enabled = !!next.aqi_global_image_enabled;
-next.aqi_global_image_size = clamp(Number(next.aqi_global_image_size ?? 52), 16, 220);
-next.aqi_global_image_radius = clamp(Number(next.aqi_global_image_radius ?? 14), 0, 40);
-next.aqi_global_image_good = String(next.aqi_global_image_good || "");
-next.aqi_global_image_warn = String(next.aqi_global_image_warn || "");
-next.aqi_global_image_bad = String(next.aqi_global_image_bad || "");
-next.aqi_global_image_unknown = String(next.aqi_global_image_unknown || "");
-
     next.aqi_tile_transparent = !!next.aqi_tile_transparent;
     next.aqi_tile_outline_transparent = !!next.aqi_tile_outline_transparent;
     next.aqi_tiles_icons_only = !!next.aqi_tiles_icons_only;
     next.aqi_entities = Array.isArray(next.aqi_entities) ? next.aqi_entities : [];
     next.aqi_overrides = next.aqi_overrides && typeof next.aqi_overrides === "object" ? next.aqi_overrides : {};
+
+    // SVG statut global (AQI)
+    next.aqi_global_svg_enabled = !!next.aqi_global_svg_enabled;
+    next.aqi_global_svg_show_icon = (next.aqi_global_svg_show_icon !== false);
+    next.aqi_global_svg_background = (next.aqi_global_svg_background !== false);
+    next.aqi_global_svg_circle = (next.aqi_global_svg_circle !== false);
+    next.aqi_global_svg_size = clamp(Number(next.aqi_global_svg_size ?? 52), 18, 140);
+    next.aqi_global_svg_background_opacity = clamp(Number(next.aqi_global_svg_background_opacity ?? 12), 0, 100);
+    next.aqi_global_svg_circle_width = clamp(Number(next.aqi_global_svg_circle_width ?? 1), 0, 10);
+
+    next.aqi_global_svg_color_mode = String(next.aqi_global_svg_color_mode ?? "status");
+    next.aqi_global_svg_background_color_mode = String(next.aqi_global_svg_background_color_mode ?? "status");
+    next.aqi_global_svg_circle_color_mode = String(next.aqi_global_svg_circle_color_mode ?? "status");
+
+    next.aqi_global_svg_color = String(next.aqi_global_svg_color ?? "");
+    next.aqi_global_svg_background_color = String(next.aqi_global_svg_background_color ?? "");
+    next.aqi_global_svg_circle_color = String(next.aqi_global_svg_circle_color ?? "");
+
 
     this._config = next;
 
@@ -2815,52 +2905,45 @@ next.aqi_global_image_unknown = String(next.aqi_global_image_unknown || "");
   }
 
   _schemaAqiGeneral() {
-  return [
-    { name: "card_mode", selector: { select: { options: [
-      { label: "Capteur Card", value: "sensor" },
-      { label: "AQI Card (multi-capteurs)", value: "aqi" },
-    ], mode: "dropdown" } } },
-    { name: "aqi_title", selector: { text: {} } },
-    { name: "aqi_title_icon", selector: { icon: {} } },
-    { name: "aqi_show_title", selector: { boolean: {} } },
-    { name: "aqi_show_global", selector: { boolean: {} } },
-    { name: "aqi_air_only", selector: { boolean: {} } },
-    { name: "aqi_show_sensors", selector: { boolean: {} } },
-    { name: "aqi_background_enabled", selector: { boolean: {} } },
+    return [
+      { name: "card_mode", selector: { select: { options: [
+        { label: "Capteur Card", value: "sensor" },
+        { label: "AQI Card (multi-capteurs)", value: "aqi" },
+      ], mode: "dropdown" } } },
+      { name: "aqi_title", selector: { text: {} } },
+      { name: "aqi_title_icon", selector: { icon: {} } },
+      { name: "aqi_show_title", selector: { boolean: {} } },
+      { name: "aqi_show_global", selector: { boolean: {} } },
+      { name: "aqi_air_only", selector: { boolean: {} } },
+      { name: "aqi_show_sensors", selector: { boolean: {} } },
+      { name: "aqi_background_enabled", selector: { boolean: {} } },
+    ];
+  }
 
-    {
-      type: "expandable",
-      name: "aqi_global_image",
-      title: "Image du statut global",
-      flatten: true,
-      schema: [
-        {
-          type: "grid",
-          name: "",
-          flatten: true,
-          column_min_width: "220px",
-          schema: [
-            { name: "aqi_global_image_enabled", selector: { boolean: {} } },
-            { name: "aqi_global_image_size", selector: { number: { min: 16, max: 220, mode: "box", step: 1 } } },
-            { name: "aqi_global_image_radius", selector: { number: { min: 0, max: 40, mode: "box", step: 1 } } },
-          ],
-        },
-        {
-          type: "grid",
-          name: "",
-          flatten: true,
-          column_min_width: "220px",
-          schema: [
-            { name: "aqi_global_image_good", selector: { text: {} } },
-            { name: "aqi_global_image_warn", selector: { text: {} } },
-            { name: "aqi_global_image_bad", selector: { text: {} } },
-            { name: "aqi_global_image_unknown", selector: { text: {} } },
-          ],
-        },
-      ],
-    },
-  ];
-}
+  _schemaAqiGlobalSvg() {
+    const colorModeOptions = [
+      { label: "Couleur du statut", value: "status" },
+      { label: "Couleur personnalisée", value: "custom" },
+    ];
+    return [
+      { name: "aqi_global_svg_enabled", selector: { boolean: {} } },
+      { name: "aqi_global_svg_size", selector: { number: { min: 18, max: 140, step: 1, mode: "box" } } },
+      { name: "aqi_global_svg_color_mode", selector: { select: { options: colorModeOptions, mode: "dropdown" } } },
+      { name: "aqi_global_svg_color", selector: { text: {} } },
+
+      { name: "aqi_global_svg_show_icon", selector: { boolean: {} } },
+
+      { name: "aqi_global_svg_background", selector: { boolean: {} } },
+      { name: "aqi_global_svg_background_opacity", selector: { number: { min: 0, max: 100, step: 1, mode: "box" } } },
+      { name: "aqi_global_svg_background_color_mode", selector: { select: { options: colorModeOptions, mode: "dropdown" } } },
+      { name: "aqi_global_svg_background_color", selector: { text: {} } },
+
+      { name: "aqi_global_svg_circle", selector: { boolean: {} } },
+      { name: "aqi_global_svg_circle_width", selector: { number: { min: 0, max: 10, step: 1, mode: "box" } } },
+      { name: "aqi_global_svg_circle_color_mode", selector: { select: { options: colorModeOptions, mode: "dropdown" } } },
+      { name: "aqi_global_svg_circle_color", selector: { text: {} } },
+    ];
+  }
 
 
   _schemaAqiEntities() {
