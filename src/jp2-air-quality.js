@@ -2,7 +2,7 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.0.4.0
+  Release notes — v2.0.4.1
   - Chore: bump version (import de la base) pour itérations rapides.
   - Ref: renommage complet du mode multi-capteurs en "AQI" (configs, UI, méthodes).
   - Fix: éditeur visuel — plus de clés `bar.*` au niveau racine (sync YAML ↔ UI)
@@ -19,13 +19,14 @@
   - Feat: AQI — option “Tuiles (horizontal) : icônes seulement”.
   - Feat: barre colorée — couleur du repère (thème ou statut).
   - Feat: barre colorée — taille du contour du repère (épaisseur).
+  - Fix: barre colorée — mode "Couleur statut" : prise en charge des valeurs legacy (ex: "Couleur statut") + lecture compat `bar.knob_color_mode`.
   - Feat: AQI — option “Air uniquement” (statut global ignore temp/humidité/pression).
   - Fix: AQI — détection preset améliorée (température/humidité/pression).*/
 
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph and a fluid visual editor (v2).";
-const CARD_VERSION = "2.0.4.0";
+const CARD_VERSION = "2.0.4.1";
 
 
 const CARD_BUILD_DATE = "2026-02-14";
@@ -67,6 +68,37 @@ function toNum(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
+
+// Normalize knob color mode to a stable internal value ("theme" | "status").
+// Accepts legacy human labels (FR/EN) and legacy location under bar.knob_color_mode.
+function normalizeKnobColorMode(mode, legacyMode) {
+  const pick = (v) => String(v ?? "").trim().toLowerCase();
+  const a = pick(mode);
+  const b = pick(legacyMode);
+
+  const isStatus = (s) =>
+    s === "status" || s === "statut" ||
+    s.includes("status") || s.includes("statut") ||
+    (s.includes("couleur") && (s.includes("statut") || s.includes("status"))) ||
+    s.includes("state color") || s.includes("status color");
+
+  const isTheme = (s) =>
+    s === "theme" || s === "thème" ||
+    s.includes("theme") || s.includes("thème") ||
+    (s.includes("couleur") && (s.includes("thème") || s.includes("theme")));
+
+  // Prefer explicit mode; fallback to legacy if provided.
+  if (a) {
+    if (isStatus(a)) return "status";
+    if (isTheme(a)) return "theme";
+  }
+  if (b) {
+    if (isStatus(b)) return "status";
+    if (isTheme(b)) return "theme";
+  }
+  return "theme";
+}
+
 
 const _JP2_UA = (typeof navigator !== "undefined" && navigator.userAgent) ? navigator.userAgent : "";
 const _JP2_IS_SAFARI = /Safari/i.test(_JP2_UA) && !/(Chrome|Chromium|Edg|OPR)/i.test(_JP2_UA);
@@ -781,6 +813,14 @@ class Jp2AirQualityCard extends HTMLElement {
     merged.aqi_tiles_per_row = clamp(Number(merged.aqi_tiles_per_row || 3), 1, 6);
     merged.aqi_tile_radius = clamp(Number(merged.aqi_tile_radius ?? 16), 0, 40);
 
+
+    // Backward-compat: older YAML might store knob color mode under bar.knob_color_mode
+    merged.knob_color_mode = normalizeKnobColorMode(merged.knob_color_mode, merged.bar?.knob_color_mode);
+    if (merged.bar && Object.prototype.hasOwnProperty.call(merged.bar, "knob_color_mode")) {
+      // keep config clean (the runtime uses the root key)
+      delete merged.bar.knob_color_mode;
+    }
+
     if (!merged.name) merged.name = DEFAULT_NAME_BY_PRESET[merged.preset] || "Capteur";
     if (!merged.icon) merged.icon = DEFAULT_ICON_BY_PRESET[merged.preset] || "mdi:information";
 
@@ -1212,8 +1252,8 @@ class Jp2AirQualityCard extends HTMLElement {
     if (cardEl) {
       cardEl.style.setProperty("--jp2-status-color", statusColor);
       cardEl.style.setProperty("--jp2-status-outline", cssColorMix(statusColor, 35));
-      const mode = String(c.knob_color_mode || "theme").toLowerCase();
-      if (mode === "status" || mode === "statut") cardEl.style.setProperty("--jp2-knob-color", statusColor);
+      const mode = normalizeKnobColorMode(c.knob_color_mode, c.bar?.knob_color_mode);
+      if (mode === "status") cardEl.style.setProperty("--jp2-knob-color", statusColor);
       else cardEl.style.setProperty("--jp2-knob-color", "var(--primary-color)");
     }
 
@@ -1690,6 +1730,10 @@ class Jp2AirQualityCardEditor extends HTMLElement {
 
       // Fix: clean any legacy dotted keys like "bar.width" from YAML
       jp2NormalizeDottedRootKeys(merged, ["bar"]);
+
+      // Backward-compat: older YAML might store knob color mode under bar.knob_color_mode
+      merged.knob_color_mode = normalizeKnobColorMode(merged.knob_color_mode, merged.bar?.knob_color_mode);
+      if (merged.bar && Object.prototype.hasOwnProperty.call(merged.bar, "knob_color_mode")) delete merged.bar.knob_color_mode;
 
       this._config = merged;
 
