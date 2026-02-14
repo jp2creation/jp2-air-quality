@@ -376,7 +376,7 @@ entities:
 
 <br>
 
-V2.0.0 includes a full redesign of the visual editor:
+V2+ includes a full redesign of the visual editor:
 - smoother UI / fewer freezes
 - clearer settings sections
 - more stable behavior when enabling **AQI** and/or **Graph**
