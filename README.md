@@ -27,23 +27,13 @@ A **Home Assistant Lovelace** card with a clean **dashboard look** to display **
 
 <br>
 
-## Table of contents
 
-- **[Installation](#installation)**
-- **[Quick start](#quick-start)**
-- **[Examples](#examples)**
-- **[Options](#options)**
-  - **[General](#general)**
-  - **[Graph](#graph)**
-  - **[Icon](#icon)**
-  - **[AQI (Air Quality Index)](#aqi-air-quality-index)**
-- **[Visual editor](#visual-editor)**
-- **[Troubleshooting](#troubleshooting)**
-- **[Development](#development)**
-- **[Contributing](#contributing)**
-- **[Changelog](#changelog)**
-- **[License](#license)**
-- **[Support](#support)**
+ ## Table of contents
+-- **[Installation](#installation)**
+-- **[Quick start](#quick-start)**
+-- **[Examples](#examples)**
+-- **[Options](#options)**
+-- **[Visual editor](#visual-editor)**
 
 <br>
 
