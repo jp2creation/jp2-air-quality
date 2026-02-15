@@ -2,17 +2,16 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.0.6 (version actuelle)
+  Release notes — v2.0.7 (version actuelle)
   - Éditeur : ajout d’un accordéon sur chaque bloc dans les onglets.
+  - Éditeur : accordéons fermés par défaut.
 */
 
 
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph, full-screen visualizer, and a fluid visual editor (v2).";
-const CARD_VERSION = "2.0.6";
-
-
+const CARD_VERSION = "2.0.7";
 const CARD_BUILD_DATE = "2026-02-15";
 // -------------------------
 // Defaults / presets
@@ -3217,7 +3216,7 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     // Accordion (one block per section inside each tab)
     const card = document.createElement("details");
     card.className = "card sec";
-    card.open = true;
+    card.open = false;
 
     const head = document.createElement("summary");
     head.className = "card-head sec-sum";
