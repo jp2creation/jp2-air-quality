@@ -2,16 +2,22 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.0.7 (version actuelle)
-  - Éditeur : ajout d’un accordéon sur chaque bloc dans les onglets.
-  - Éditeur : accordéons fermés par défaut.
-*/
+  Release notes — v2.0.8 (version actuelle)
+  - Éditeur : correction de la fermeture automatique des accordéons (et perte de focus) lors des modifications d’overrides.
 
+  Release notes — v2.0.7
+  - Éditeur : accordéons fermés par défaut.
+
+  Release notes — v2.0.6
+  - Éditeur : ajout d’un accordéon sur chaque bloc “Override”.
+*/
 
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph, full-screen visualizer, and a fluid visual editor (v2).";
-const CARD_VERSION = "2.0.7";
+const CARD_VERSION = "2.0.8";
+
+
 const CARD_BUILD_DATE = "2026-02-15";
 // -------------------------
 // Defaults / presets
@@ -2771,6 +2777,10 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     this._tab = "general";
     this._raf = null;
 
+    // Overrides accordions state (kept across renders)
+    this._ovOpenState = Object.create(null);
+    this._overridesWrap = null;
+
     this._onTabClick = this._onTabClick.bind(this);
     this._onFormValueChanged = this._onFormValueChanged.bind(this);
     this._onOverridesChanged = this._onOverridesChanged.bind(this);
@@ -2922,18 +2932,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         .card-head .h { font-weight: 800; }
         .card-head .p { font-size: 12px; opacity: .7; margin-top: 2px; }
         .card-body { padding: 12px 14px 14px; }
-
-        /* Accordéon des blocs (dans chaque onglet) */
-        details.card.sec { display:block; }
-        summary.sec-sum { list-style:none; cursor:pointer; user-select:none; }
-        summary.sec-sum::-webkit-details-marker { display:none; }
-        .sec-chev {
-          opacity: .65;
-          --mdc-icon-size: 20px;
-          transition: transform .16s ease;
-        }
-        details.sec[open] .sec-chev { transform: rotate(180deg); }
-
         ha-form { display:block; }
         .muted { font-size: 12px; opacity: .72; line-height: 1.35; }
 
@@ -3211,32 +3209,24 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     return root;
   }
 
-
   _section(title, subtitle, bodyEl) {
-    // Accordion (one block per section inside each tab)
-    const card = document.createElement("details");
-    card.className = "card sec";
-    card.open = false;
-
-    const head = document.createElement("summary");
-    head.className = "card-head sec-sum";
+    const card = document.createElement("div");
+    card.className = "card";
+    const head = document.createElement("div");
+    head.className = "card-head";
     head.innerHTML = `
       <div>
         <div class="h">${title}</div>
         <div class="p">${subtitle || ""}</div>
       </div>
-      <ha-icon class="sec-chev" icon="mdi:chevron-down"></ha-icon>
     `;
-
     const body = document.createElement("div");
     body.className = "card-body";
     body.appendChild(bodyEl);
-
     card.appendChild(head);
     card.appendChild(body);
     return card;
   }
-
 
   _makeForm(schema, data) {
     const form = document.createElement("ha-form");
@@ -3921,12 +3911,22 @@ class Jp2AirQualityCardEditor extends HTMLElement {
   _overridesEditor() {
     const wrap = document.createElement("div");
     wrap.id = "overridesEditor";
+    this._overridesWrap = wrap;
     this._renderOverridesInto(wrap);
     return wrap;
   }
 
   _renderOverridesInto(wrap) {
     if (!wrap) return;
+
+    // Preserve current open/closed state before re-creating the DOM
+    try {
+      for (const d of Array.from(wrap.querySelectorAll("details.ov[data-eid]"))) {
+        const eid = d.dataset.eid;
+        if (eid) this._ovOpenState[eid] = !!d.open;
+      }
+    } catch (_) {}
+
     const ents = Array.isArray(this._config?.aqi_entities) ? this._config.aqi_entities : [];
     const overrides = (this._config?.aqi_overrides && typeof this._config.aqi_overrides === "object") ? this._config.aqi_overrides : {};
 
@@ -3945,6 +3945,13 @@ class Jp2AirQualityCardEditor extends HTMLElement {
 
       const det = document.createElement("details");
       det.className = "ov";
+      det.dataset.eid = eid;
+
+      // Default is closed, but keep user state across updates
+      if (this._ovOpenState && this._ovOpenState[eid]) det.open = true;
+      det.addEventListener("toggle", () => {
+        this._ovOpenState[eid] = !!det.open;
+      });
 
       const sum = document.createElement("summary");
       sum.className = "ov-sum";
@@ -3954,8 +3961,8 @@ class Jp2AirQualityCardEditor extends HTMLElement {
           <div class="ov-eid">${eid}</div>
         </div>
         <div class="ov-right">
-          <div class="ov-pill">${ov.name ? "Nom" : "Nom auto"}</div>
-          <div class="ov-pill">${ov.icon ? "Icône" : "Icône auto"}</div>
+          <div class="ov-pill" data-pill="name">${ov.name ? "Nom" : "Nom auto"}</div>
+          <div class="ov-pill" data-pill="icon">${ov.icon ? "Icône" : "Icône auto"}</div>
         </div>
       `;
 
@@ -3993,6 +4000,8 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       const reset = document.createElement("mwc-button");
       reset.label = "Reset";
       reset.addEventListener("click", () => {
+        // Keep accordion state after reset
+        this._ovOpenState[eid] = !!det.open;
         const next = deepClone(this._config);
         next.aqi_overrides = { ...(next.aqi_overrides || {}) };
         delete next.aqi_overrides[eid];
@@ -4058,7 +4067,31 @@ class Jp2AirQualityCardEditor extends HTMLElement {
 
     this._config = next;
     this._fireConfigChanged(this._config);
-    this._render();
+    // IMPORTANT: ne pas re-render ici.
+    // Sinon le DOM est reconstruit, ce qui fait perdre le focus et referme l’accordéon.
+    this._updateOverrideRowUI(eid);
+  }
+
+  _updateOverrideRowUI(eid) {
+    if (!eid) return;
+    const wrap = (this._overridesWrap && this._overridesWrap.isConnected)
+      ? this._overridesWrap
+      : (this.shadowRoot ? this.shadowRoot.getElementById("overridesEditor") : null);
+    if (!wrap) return;
+
+    let det = null;
+    for (const d of Array.from(wrap.querySelectorAll("details.ov[data-eid]"))) {
+      if (d && d.dataset && d.dataset.eid === eid) { det = d; break; }
+    }
+    if (!det) return;
+
+    const ovs = (this._config?.aqi_overrides && typeof this._config.aqi_overrides === "object") ? this._config.aqi_overrides : {};
+    const ov = ovs[eid] || {};
+
+    const namePill = det.querySelector('summary.ov-sum .ov-pill[data-pill="name"]');
+    const iconPill = det.querySelector('summary.ov-sum .ov-pill[data-pill="icon"]');
+    if (namePill) namePill.textContent = ov.name ? "Nom" : "Nom auto";
+    if (iconPill) iconPill.textContent = ov.icon ? "Icône" : "Icône auto";
   }
 
   _fireConfigChanged(cfg) {
