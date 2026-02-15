@@ -2,7 +2,10 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.0.9 (version actuelle)
+  Release notes — v2.0.10 (version actuelle)
+  - Presets : ajout d’un preset personnalisé (seuils libres) pour intégrer un capteur sans preset pré-enregistré.
+
+  Release notes — v2.0.9
   - Éditeur : accordéons (blocs + overrides) restaurés : ouverture/fermeture fonctionnelle sans perte de focus.
 
   Release notes — v2.0.8
@@ -19,7 +22,7 @@
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph, full-screen visualizer, and a fluid visual editor (v2).";
-const CARD_VERSION = "2.0.9";
+const CARD_VERSION = "2.0.10";
 
 
 const CARD_BUILD_DATE = "2026-02-15";
@@ -644,6 +647,7 @@ class Jp2AirQualityCard extends HTMLElement {
       { label: "PM1", value: "pm1" },
       { label: "PM2.5", value: "pm25" },
       { label: "CO₂", value: "co2" },
+      { label: "Personnalisé (capteur libre)", value: "custom" },
     ];
 
     const graphPosOptions = [
@@ -882,6 +886,22 @@ class Jp2AirQualityCard extends HTMLElement {
       card_mode: "Type de carte",
       entity: "Capteur",
       preset: "Preset",
+      // preset personnalisé
+      "custom_preset.type": "Type de preset",
+      "custom_preset.unit_fallback": "Unité (fallback)",
+      "custom_preset.decimals": "Décimales",
+      "custom_preset.min": "Valeur min",
+      "custom_preset.max": "Valeur max",
+      "custom_preset.good_max": "Seuil bon (max)",
+      "custom_preset.warn_max": "Seuil moyen (max)",
+      "custom_preset.warn_low_min": "Seuil moyen bas (min)",
+      "custom_preset.good_min": "Seuil bon (min)",
+      "custom_preset.good_max_band": "Seuil bon (max zone)",
+      "custom_preset.warn_high_max": "Seuil moyen haut (max)",
+      "custom_preset.label_good": "Label bon",
+      "custom_preset.label_warn": "Label moyen",
+      "custom_preset.label_bad": "Label mauvais",
+
       name: "Nom",
       icon: "Icône",
       background_enabled: "Fond coloré",
@@ -1195,6 +1215,114 @@ class Jp2AirQualityCard extends HTMLElement {
         label_good: "Normal", label_warn: "Variable", label_bad: "Extrême",
       },
     };
+
+    // Preset personnalisé (capteur libre)
+    if (p === "custom") {
+      const raw = (this._config && this._config.custom_preset && typeof this._config.custom_preset === "object" && !Array.isArray(this._config.custom_preset))
+        ? this._config.custom_preset
+        : {};
+
+      const baseRising = {
+        ...common,
+        type: "rising",
+        decimals: 0,
+        unit_fallback: "",
+        min: 0,
+        max: 100,
+        good_max: 33,
+        warn_max: 66,
+        label_good: "Bon",
+        label_warn: "Moyen",
+        label_bad: "Mauvais",
+      };
+
+      const baseBand = {
+        ...common,
+        type: "band",
+        decimals: 0,
+        unit_fallback: "",
+        min: 0,
+        max: 100,
+        warn_low_min: 30,
+        good_min: 40,
+        good_max_band: 60,
+        warn_high_max: 70,
+        label_good: "Bon",
+        label_warn: "Moyen",
+        label_bad: "Mauvais",
+      };
+
+      const rawType = String(raw.type || "rising").toLowerCase();
+      const wantsBand = rawType === "band";
+      const base = wantsBand ? baseBand : baseRising;
+
+      const merged = { ...base, ...raw };
+
+      // Alias support for convenience
+      if (wantsBand) {
+        if (merged.good_max_band === undefined && merged.good_max !== undefined) merged.good_max_band = merged.good_max;
+        if (merged.warn_high_max === undefined && merged.warn_max !== undefined) merged.warn_high_max = merged.warn_max;
+      }
+
+      const numOr = (v, fb) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : fb;
+      };
+
+      const out = { ...merged };
+      out.type = wantsBand ? "band" : "rising";
+      out.decimals = numOr(out.decimals, base.decimals);
+      out.min = numOr(out.min, base.min);
+      out.max = numOr(out.max, base.max);
+
+      if (!Number.isFinite(out.min) || !Number.isFinite(out.max) || out.max <= out.min) {
+        out.min = base.min;
+        out.max = base.max;
+      }
+
+      out.unit_fallback = String(out.unit_fallback ?? "");
+      out.label_good = String(out.label_good || base.label_good);
+      out.label_warn = String(out.label_warn || base.label_warn);
+      out.label_bad = String(out.label_bad || base.label_bad);
+
+      if (out.type === "band") {
+        out.warn_low_min = numOr(out.warn_low_min, base.warn_low_min);
+        out.good_min = numOr(out.good_min, base.good_min);
+        out.good_max_band = numOr(out.good_max_band, base.good_max_band);
+        out.warn_high_max = numOr(out.warn_high_max, base.warn_high_max);
+
+        out.warn_low_min = clamp(out.warn_low_min, out.min, out.max);
+        out.good_min = clamp(out.good_min, out.min, out.max);
+        out.good_max_band = clamp(out.good_max_band, out.min, out.max);
+        out.warn_high_max = clamp(out.warn_high_max, out.min, out.max);
+
+        // Ensure ordering, else fall back to base
+        if (!(out.warn_low_min <= out.good_min && out.good_min <= out.good_max_band && out.good_max_band <= out.warn_high_max)) {
+          out.warn_low_min = base.warn_low_min;
+          out.good_min = base.good_min;
+          out.good_max_band = base.good_max_band;
+          out.warn_high_max = base.warn_high_max;
+        }
+
+        // Back-compat mapping expected by some code paths
+        return { ...out, good_max: out.good_max_band, warn_max: out.warn_high_max };
+      }
+
+      // Rising thresholds
+      out.good_max = numOr(out.good_max, base.good_max);
+      out.warn_max = numOr(out.warn_max, base.warn_max);
+
+      out.good_max = clamp(out.good_max, out.min, out.max);
+      out.warn_max = clamp(out.warn_max, out.min, out.max);
+
+      if (out.warn_max < out.good_max) {
+        const tmp = out.good_max;
+        out.good_max = out.warn_max;
+        out.warn_max = tmp;
+      }
+
+      return out;
+    }
 
     const cfg = map[p] || map.radon;
 
@@ -2856,7 +2984,29 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       merged.aqi_air_only = !!merged.aqi_air_only;
 
       // Fix: clean any legacy dotted keys like "bar.width" from YAML
-      jp2NormalizeDottedRootKeys(merged, ["bar"]);
+      jp2NormalizeDottedRootKeys(merged, ["bar", "custom_preset"]);
+      // Preset personnalisé (capteur libre)
+      merged.custom_preset = (merged.custom_preset && typeof merged.custom_preset === "object" && !Array.isArray(merged.custom_preset)) ? merged.custom_preset : {};
+      if (merged.preset === "custom" && Object.keys(merged.custom_preset).length === 0) {
+        merged.custom_preset = {
+          type: "rising",
+          unit_fallback: "",
+          decimals: 0,
+          min: 0,
+          max: 100,
+          good_max: 33,
+          warn_max: 66,
+          // band (optionnel)
+          warn_low_min: 30,
+          good_min: 40,
+          good_max_band: 60,
+          warn_high_max: 70,
+          // labels
+          label_good: "Bon",
+          label_warn: "Moyen",
+          label_bad: "Mauvais",
+        };
+      }
 
       const incomingStr = jp2StableStringify(merged);
 
@@ -3183,6 +3333,17 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         ,
         "sensor.general"
       ));
+
+      // Preset personnalisé (capteur libre)
+      if (String(this._config?.preset || "") === "custom") {
+        root.appendChild(this._section(
+          "Preset personnalisé",
+          "Crée ton preset : seuils, unité, décimales et labels (Bon/Moyen/Mauvais).",
+          this._makeForm(this._schemaSensorCustomPreset(), this._config),
+          "sensor.custom_preset"
+        ));
+      }
+
 return root;
       }
       if (tabId === "display") {
@@ -3378,6 +3539,22 @@ return root;
       card_mode: "Type de carte",
       entity: "Entité",
       preset: "Preset",
+      // preset personnalisé
+      "custom_preset.type": "Type de preset",
+      "custom_preset.unit_fallback": "Unité (fallback)",
+      "custom_preset.decimals": "Décimales",
+      "custom_preset.min": "Valeur min",
+      "custom_preset.max": "Valeur max",
+      "custom_preset.good_max": "Seuil bon (max)",
+      "custom_preset.warn_max": "Seuil moyen (max)",
+      "custom_preset.warn_low_min": "Seuil moyen bas (min)",
+      "custom_preset.good_min": "Seuil bon (min)",
+      "custom_preset.good_max_band": "Seuil bon (max zone)",
+      "custom_preset.warn_high_max": "Seuil moyen haut (max)",
+      "custom_preset.label_good": "Label bon",
+      "custom_preset.label_warn": "Label moyen",
+      "custom_preset.label_bad": "Label mauvais",
+
       name: "Nom",
       icon: "Icône",
       // sensor display
@@ -3503,6 +3680,20 @@ return root;
     const n = String(s?.name || "");
     const key = n.startsWith("bar.") ? n.slice(4) : n;
     const map = {
+      "custom_preset.type": "Rising = plus haut = pire. Band = zone de confort (min/max).",
+      "custom_preset.unit_fallback": "Unité affichée si le capteur n’en fournit pas.",
+      "custom_preset.decimals": "Nombre de décimales à afficher (0..6).",
+      "custom_preset.min": "Début de l’échelle (pour la barre + le graphe).",
+      "custom_preset.max": "Fin de l’échelle (pour la barre + le graphe).",
+      "custom_preset.good_max": "Rising : max pour être Bon (<=).",
+      "custom_preset.warn_max": "Rising : max pour être Moyen (<=). Au-delà = Mauvais.",
+      "custom_preset.warn_low_min": "Band : limite basse de la zone Moyen (min).",
+      "custom_preset.good_min": "Band : début de la zone Bon (min).",
+      "custom_preset.good_max_band": "Band : fin de la zone Bon (max).",
+      "custom_preset.warn_high_max": "Band : limite haute de la zone Moyen (max).",
+      "custom_preset.label_good": "Texte affiché pour l’état Bon.",
+      "custom_preset.label_warn": "Texte affiché pour l’état Moyen.",
+      "custom_preset.label_bad": "Texte affiché pour l’état Mauvais.",
       graph_color: "Ex: #03a9f4 (laisse vide pour auto).",
       graph_warn_color: "Couleur pour la zone warn (pics/segments).",
       graph_bad_color: "Couleur pour la zone bad (pics/segments).",
@@ -3572,12 +3763,35 @@ return root;
     };
 
     // Sécurité : ne jamais conserver de clés racines du type "bar.width"
-    jp2NormalizeDottedRootKeys(next, ["bar"]);
+    jp2NormalizeDottedRootKeys(next, ["bar", "custom_preset"]);
 
 
     // Normalisation soft
     next.card_mode = String(next.card_mode || "sensor");
     next.preset = String(next.preset || "radon");
+
+    // Preset personnalisé (capteur libre)
+    next.custom_preset = (next.custom_preset && typeof next.custom_preset === "object" && !Array.isArray(next.custom_preset)) ? next.custom_preset : {};
+    if (next.preset === "custom" && Object.keys(next.custom_preset).length === 0) {
+      next.custom_preset = {
+        type: "rising",
+        unit_fallback: "",
+        decimals: 0,
+        min: 0,
+        max: 100,
+        good_max: 33,
+        warn_max: 66,
+        // band (optionnel)
+        warn_low_min: 30,
+        good_min: 40,
+        good_max_band: 60,
+        warn_high_max: 70,
+        // labels
+        label_good: "Bon",
+        label_warn: "Moyen",
+        label_bad: "Mauvais",
+      };
+    }
     next.aqi_layout = String(next.aqi_layout || "vertical");
     next.aqi_tiles_per_row = clamp(Number(next.aqi_tiles_per_row || 3), 1, 6);
     next.aqi_tile_radius = clamp(Number(next.aqi_tile_radius ?? 16), 0, 40);
@@ -3643,12 +3857,68 @@ return root;
         { label: "PM1", value: "pm1" },
         { label: "PM2.5", value: "pm25" },
         { label: "CO₂", value: "co2" },
+        { label: "Personnalisé (capteur libre)", value: "custom" },
       ], mode: "dropdown" } } },
       { name: "name", selector: { text: {} } },
       { name: "icon", selector: { icon: {} }, context: { icon_entity: "entity" } },
       { name: "background_enabled", selector: { boolean: {} } },
       { name: "bar_enabled", selector: { boolean: {} } },
       { name: "show_graph", selector: { boolean: {} } },
+    ];
+  }
+
+  _schemaSensorCustomPreset() {
+    return [
+      { name: "custom_preset.type", selector: { select: { options: [
+        { label: "Rising (plus haut = pire)", value: "rising" },
+        { label: "Band (zone de confort)", value: "band" },
+      ], mode: "dropdown" } } },
+
+      {
+        type: "grid", name: "", flatten: true, column_min_width: "220px",
+        schema: [
+          { name: "custom_preset.unit_fallback", selector: { text: {} } },
+          { name: "custom_preset.decimals", selector: { number: { min: 0, max: 6, mode: "box", step: 1 } } },
+        ]
+      },
+
+      {
+        type: "grid", name: "", flatten: true, column_min_width: "220px",
+        schema: [
+          { name: "custom_preset.min", selector: { number: { min: -100000, max: 100000, mode: "box", step: 0.1 } } },
+          { name: "custom_preset.max", selector: { number: { min: -100000, max: 100000, mode: "box", step: 0.1 } } },
+        ]
+      },
+
+      // Rising thresholds (type = rising)
+      {
+        type: "grid", name: "", flatten: true, column_min_width: "220px",
+        schema: [
+          { name: "custom_preset.good_max", selector: { number: { min: -100000, max: 100000, mode: "box", step: 0.1 } } },
+          { name: "custom_preset.warn_max", selector: { number: { min: -100000, max: 100000, mode: "box", step: 0.1 } } },
+        ]
+      },
+
+      // Band thresholds (type = band)
+      {
+        type: "grid", name: "", flatten: true, column_min_width: "220px",
+        schema: [
+          { name: "custom_preset.warn_low_min", selector: { number: { min: -100000, max: 100000, mode: "box", step: 0.1 } } },
+          { name: "custom_preset.good_min", selector: { number: { min: -100000, max: 100000, mode: "box", step: 0.1 } } },
+          { name: "custom_preset.good_max_band", selector: { number: { min: -100000, max: 100000, mode: "box", step: 0.1 } } },
+          { name: "custom_preset.warn_high_max", selector: { number: { min: -100000, max: 100000, mode: "box", step: 0.1 } } },
+        ]
+      },
+
+      // Labels
+      {
+        type: "grid", name: "", flatten: true, column_min_width: "220px",
+        schema: [
+          { name: "custom_preset.label_good", selector: { text: {} } },
+          { name: "custom_preset.label_warn", selector: { text: {} } },
+          { name: "custom_preset.label_bad", selector: { text: {} } },
+        ]
+      },
     ];
   }
 
@@ -4205,7 +4475,7 @@ const body = document.createElement("div");
     const cleaned = deepClone(cfg);
 
     // Fix: supprime les clés racines du type "bar.width" si présentes
-    jp2NormalizeDottedRootKeys(cleaned, ["bar"]);
+    jp2NormalizeDottedRootKeys(cleaned, ["bar", "custom_preset"]);
 
     // Nettoyage des overrides vides / null
     if (cleaned.aqi_overrides && typeof cleaned.aqi_overrides === "object") {
