@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/images/preview.png" alt="JP2 Air Quality Card preview" width="100%">
+<img src="docs/images/jp2_aqi-banner.png" alt="JP2 Air Quality Card preview" width="100%">
 
 <br>
 
