@@ -2,20 +2,24 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.0.8 (version actuelle)
-  - Éditeur : correction de la fermeture automatique des accordéons (et perte de focus) lors des modifications d’overrides.
+  Release notes — v2.0.9 (version actuelle)
+  - Éditeur : accordéons (blocs + overrides) restaurés : ouverture/fermeture fonctionnelle sans perte de focus.
 
-  Release notes — v2.0.7
-  - Éditeur : accordéons fermés par défaut.
+  Release notes — v2.0.8
+  - Éditeur : ajout d’un accordéon sur chaque bloc dans les onglets (fermés par défaut).
+  - Éditeur : correction du re-render automatique après chaque modification (le focus et l’état des accordéons ne sautent plus).
 
-  Release notes — v2.0.6
-  - Éditeur : ajout d’un accordéon sur chaque bloc “Override”.
+  Release notes — v2.0.5
+  - Ref: visualisateur d’historique plein écran (tap sur le mini-graphe) : plages rapides, stats, tooltips, seuils.
+  - UX: clic sur l’en-tête/repère ouvre “Plus d’infos” (capteur) ; clic sur le graphe ouvre le visualisateur.
+  - Perf: downsampling de l’historique + cache partagé (mini-graphe + visualiseur).
+  - Back-compat: configs v2.x supportées ; options visualizer_* facultatives.
 */
 
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph, full-screen visualizer, and a fluid visual editor (v2).";
-const CARD_VERSION = "2.0.8";
+const CARD_VERSION = "2.0.9";
 
 
 const CARD_BUILD_DATE = "2026-02-15";
@@ -220,6 +224,28 @@ function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj || {}));
 }
 
+
+
+
+function jp2StableStringify(value) {
+  const seen = new WeakSet();
+  const norm = (v) => {
+    if (v === null || v === undefined) return v;
+    const t = typeof v;
+    if (t === "number" || t === "string" || t === "boolean") return v;
+    if (Array.isArray(v)) return v.map(norm);
+    if (t === "object") {
+      if (seen.has(v)) return "[Circular]";
+      seen.add(v);
+      const out = {};
+      for (const k of Object.keys(v).sort()) out[k] = norm(v[k]);
+      return out;
+    }
+    return String(v);
+  };
+  try { return JSON.stringify(norm(value)); }
+  catch (_) { try { return JSON.stringify(value); } catch (__) { return String(value); } }
+}
 
 function normalizeHaFormSchema(schema) {
   const walk = (node) => {
@@ -2777,13 +2803,16 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     this._tab = "general";
     this._raf = null;
 
-    // Overrides accordions state (kept across renders)
-    this._ovOpenState = Object.create(null);
-    this._overridesWrap = null;
-
     this._onTabClick = this._onTabClick.bind(this);
     this._onFormValueChanged = this._onFormValueChanged.bind(this);
     this._onOverridesChanged = this._onOverridesChanged.bind(this);
+
+    this._secOpenState = Object.create(null);
+    this._ovOpenState = Object.create(null);
+    this._overridesWrap = null;
+    this._lastFiredConfigStr = "";
+    this._lastRenderedConfigStr = "";
+
   }
 
   set hass(hass) {
@@ -2829,11 +2858,25 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       // Fix: clean any legacy dotted keys like "bar.width" from YAML
       jp2NormalizeDottedRootKeys(merged, ["bar"]);
 
-      this._config = merged;
+      const incomingStr = jp2StableStringify(merged);
 
+      this._config = merged;
       this._ensureUI();
+
+      // Évite le re-render juste après un config-changed provenant de cet éditeur.
+      // Sinon: perte du focus + accordéons qui se referment.
+      if (this._uiReady && this._lastFiredConfigStr && incomingStr === this._lastFiredConfigStr) {
+        this._lastRenderedConfigStr = incomingStr;
+        return;
+      }
+      // Évite les re-render inutiles (config identique)
+      if (this._uiReady && this._lastRenderedConfigStr && incomingStr === this._lastRenderedConfigStr) {
+        return;
+      }
+
       this._render();
-    } catch (err) {
+      this._lastRenderedConfigStr = incomingStr;
+} catch (err) {
       console.warn(`[${CARD_NAME}] editor setConfig failed`, err);
       try { this._ensureUI(); } catch (_) {}
       const content = this.shadowRoot?.getElementById("content");
@@ -2932,6 +2975,14 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         .card-head .h { font-weight: 800; }
         .card-head .p { font-size: 12px; opacity: .7; margin-top: 2px; }
         .card-body { padding: 12px 14px 14px; }
+
+
+        /* Accordéon des blocs (dans chaque onglet) */
+        .card.sec { display:block; }
+        .sec-sum { cursor:pointer; user-select:none; background:none; border:0; width:100%; text-align:left; color: inherit; font: inherit; }
+        
+        .sec-chev { opacity: .65; font-size: 18px; line-height: 1; transition: transform .16s ease; padding-top: 2px; }
+        .sec.open .sec-chev { transform: rotate(180deg); }
         ha-form { display:block; }
         .muted { font-size: 12px; opacity: .72; line-height: 1.35; }
 
@@ -2963,15 +3014,20 @@ class Jp2AirQualityCardEditor extends HTMLElement {
 
         /* Overrides list */
         .ov-list { display:flex; flex-direction:column; gap: 10px; }
-        details.ov {
+        .ov {
           border: 1px solid rgba(0,0,0,.08);
           border-radius: 16px;
           background: rgba(0,0,0,.02);
           overflow:hidden;
         }
-        details.ov[open] { background: rgba(0,0,0,.03); }
-        summary.ov-sum {
-          list-style: none;
+        .ov.open { background: rgba(0,0,0,.03); }
+        .ov-sum {
+          background:none;
+          border: 0;
+          width: 100%;
+          text-align: left;
+          color: inherit;
+          font: inherit;
           cursor: pointer;
           padding: 10px 12px;
           display:flex;
@@ -2979,7 +3035,7 @@ class Jp2AirQualityCardEditor extends HTMLElement {
           justify-content:space-between;
           gap: 10px;
         }
-        summary.ov-sum::-webkit-details-marker { display:none; }
+        
         .ov-left { display:flex; flex-direction:column; min-width: 0; }
         .ov-name { font-weight: 900; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .ov-eid { font-size: 11px; opacity: .65; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -3023,7 +3079,10 @@ class Jp2AirQualityCardEditor extends HTMLElement {
   _render() {
     if (!this._config) return;
 
-    // Tabs dépendants du mode
+    
+
+    this._captureAccordionState();
+// Tabs dépendants du mode
     const tabs = this._buildTabs();
     if (!tabs.some(t => t.id === this._tab)) this._tab = tabs[0]?.id || "general";
 
@@ -3047,6 +3106,7 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     const content = this.shadowRoot.getElementById("content");
     content.innerHTML = "";
     content.appendChild(this._renderTabContent(this._tab));
+    this._lastRenderedConfigStr = jp2StableStringify(this._config);
 
     // Assure hass sur tous les ha-form rendus
     for (const f of Array.from(this.shadowRoot.querySelectorAll("ha-form"))) {
@@ -3055,6 +3115,24 @@ class Jp2AirQualityCardEditor extends HTMLElement {
 
     // Refresh previews
   }
+
+  _captureAccordionState() {
+    try {
+      // Sections (blocs) accordéon
+      for (const d of Array.from(this.shadowRoot?.querySelectorAll(".sec[data-sec-id]") || [])) {
+        const id = d.dataset.secId;
+        if (!id) continue;
+        this._secOpenState[id] = d.classList.contains("open");
+      }
+      // Overrides accordéon (par entité)
+      for (const d of Array.from(this.shadowRoot?.querySelectorAll(".ov[data-eid]") || [])) {
+        const id = d.dataset.eid;
+        if (!id) continue;
+        this._ovOpenState[id] = d.classList.contains("open");
+      }
+    } catch (_) {}
+  }
+
 
   _buildTabs() {
     if (this._isAqi) {
@@ -3099,43 +3177,53 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     if (!isAqi) {
       if (tabId === "general") {
         root.appendChild(this._section(
-          "Configuration",
-          "Choisis le type de carte et l’entité. Le preset ajuste automatiquement unités et seuils.",
-          this._makeForm(this._schemaSensorGeneral(), this._config)
-        ));
-        return root;
+        "Configuration",
+        "Choisis le type de carte et l’entité. Le preset ajuste automatiquement unités et seuils.",
+        this._makeForm(this._schemaSensorGeneral(), this._config)
+        ,
+        "sensor.general"
+      ));
+return root;
       }
       if (tabId === "display") {
         root.appendChild(this._section(
-          "Affichage",
-          "Active/masque les blocs, ajuste les tailles (icônes, typo, knob).",
-          this._makeForm(this._schemaSensorDisplay(), this._config)
-        ));
-        return root;
+        "Affichage",
+        "Active/masque les blocs, ajuste les tailles (icônes, typo, knob).",
+        this._makeForm(this._schemaSensorDisplay(), this._config)
+        ,
+        "sensor.display"
+      ));
+return root;
       }
       if (tabId === "graph") {
         root.appendChild(this._section(
-          "Graphe interne",
-          "Historique léger (sans mini-graph-card). Ajuste hauteur, heures et mode de couleurs.",
-          this._makeForm(this._schemaSensorGraph(), this._config)
-        ));
-        return root;
+        "Graphe interne",
+        "Historique léger (sans mini-graph-card). Ajuste hauteur, heures et mode de couleurs.",
+        this._makeForm(this._schemaSensorGraph(), this._config)
+        ,
+        "sensor.graph"
+      ));
+return root;
       }
       if (tabId === "bar") {
         root.appendChild(this._section(
-          "Barre colorée",
-          "Réglages de la barre (largeur, hauteur, alignement) + repère (cercle).",
-          this._makeForm(this._schemaSensorBar(), this._config)
-        ));
-        return root;
+        "Barre colorée",
+        "Réglages de la barre (largeur, hauteur, alignement) + repère (cercle).",
+        this._makeForm(this._schemaSensorBar(), this._config)
+        ,
+        "sensor.bar"
+      ));
+return root;
       }
       if (tabId === "colors") {
         root.appendChild(this._section(
-          "Couleurs",
-          "Couleurs Bon / Moyen / Mauvais (utilisées pour la barre, l’icône et le statut).",
-          this._makeForm(this._schemaSensorColors(), this._config)
-        ));
-        return root;
+        "Couleurs",
+        "Couleurs Bon / Moyen / Mauvais (utilisées pour la barre, l’icône et le statut).",
+        this._makeForm(this._schemaSensorColors(), this._config)
+        ,
+        "sensor.colors"
+      ));
+return root;
       }
       return root;
     }
@@ -3146,18 +3234,24 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         "AQI — Général",
         "Carte multi-capteurs : titre, affichage global, fond, etc.",
         this._makeForm(this._schemaAqiGeneral(), this._config)
+      ,
+        "aqi.general"
       ));
-      root.appendChild(this._section(
+root.appendChild(this._section(
         "Statut global — Icône SVG",
         "Optionnel : affiche une icône SVG au-dessus du statut global (Bon/Moyen/Mauvais). Couleurs = statut ou perso, avec cercle et fond optionnels.",
         this._makeForm(this._schemaAqiGlobalSvg(), this._config)
+      ,
+        "aqi.global_svg"
       ));
-      root.appendChild(this._section(
+root.appendChild(this._section(
         "Statut global — Style",
         "Réglages du point (taille/contour) et du texte. Tu peux masquer le statut tout en gardant le SVG.",
         this._makeForm(this._schemaAqiGlobalStatus(), this._config)
+      ,
+        "aqi.global_status"
       ));
-      return root;
+return root;
     }
 
     if (tabId === "aqi_entities") {
@@ -3165,8 +3259,10 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         "AQI — Entités",
         "Sélectionne tes capteurs (ordre = ordre d’affichage).",
         this._aqiEntitiesEditor()
+      ,
+        "aqi.entities"
       ));
-      return root;
+return root;
     }
 
     if (tabId === "aqi_layout") {
@@ -3174,8 +3270,10 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         "AQI — Disposition",
         "Choisis la disposition (liste verticale ou tuiles horizontales) + options de tuiles.",
         this._makeForm(this._schemaAqiLayout(), this._config)
+      ,
+        "aqi.layout"
       ));
-      return root;
+return root;
     }
 
     if (tabId === "aqi_icons") {
@@ -3183,18 +3281,24 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         "AQI — Icônes & contenu",
         "Contrôle ce qui est affiché par capteur + style des icônes.",
         this._makeForm(this._schemaAqiRowDisplay(), this._config)
+      ,
+        "aqi.icons_content"
       ));
-      root.appendChild(this._section(
+root.appendChild(this._section(
         "Typographie",
         "Taille et épaisseur des textes (0 = auto).",
         this._makeForm(this._schemaAqiTypography(), this._config)
+      ,
+        "aqi.typography"
       ));
-      root.appendChild(this._section(
+root.appendChild(this._section(
         "Style des icônes",
         "Taille du cercle, taille du pictogramme, fond et cercle.",
         this._makeForm(this._schemaAqiIconStyle(), this._config)
+      ,
+        "aqi.icon_style"
       ));
-      return root;
+return root;
     }
 
     if (tabId === "aqi_overrides") {
@@ -3202,31 +3306,54 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         "Overrides par capteur",
         "Surcharge le nom et/ou l’icône pour des entités spécifiques. (Optionnel)",
         this._overridesEditor()
+      ,
+        "aqi.overrides"
       ));
-      return root;
+return root;
     }
 
     return root;
   }
 
-  _section(title, subtitle, bodyEl) {
-    const card = document.createElement("div");
-    card.className = "card";
-    const head = document.createElement("div");
-    head.className = "card-head";
+  _section(title, subtitle, bodyEl, secId = "") {
+    const id = String(secId || title || "");
+    const wrap = document.createElement("div");
+    wrap.className = "card sec";
+    wrap.dataset.secId = id;
+
+    const isOpen = this._secOpenState[id] === true;
+    if (isOpen) wrap.classList.add("open");
+
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "card-head sec-sum";
+    head.setAttribute("aria-expanded", String(isOpen));
     head.innerHTML = `
       <div>
         <div class="h">${title}</div>
         <div class="p">${subtitle || ""}</div>
       </div>
+      <span class="sec-chev">▾</span>
     `;
+
     const body = document.createElement("div");
-    body.className = "card-body";
+    body.className = "card-body sec-body";
+    body.hidden = !isOpen;
     body.appendChild(bodyEl);
-    card.appendChild(head);
-    card.appendChild(body);
-    return card;
+
+    head.addEventListener("click", () => {
+      const next = !wrap.classList.contains("open");
+      wrap.classList.toggle("open", next);
+      body.hidden = !next;
+      this._secOpenState[id] = next;
+      head.setAttribute("aria-expanded", String(next));
+    });
+
+    wrap.appendChild(head);
+    wrap.appendChild(body);
+    return wrap;
   }
+
 
   _makeForm(schema, data) {
     const form = document.createElement("ha-form");
@@ -3840,8 +3967,8 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     next.aqi_entities = ents;
     this._config = next;
     this._fireConfigChanged(this._config);
-    this._render();
-  }
+        this._renderOverridesInto(this._overridesWrap || wrap);
+}
 
   _schemaAqiLayout() {
     return [
@@ -3911,22 +4038,14 @@ class Jp2AirQualityCardEditor extends HTMLElement {
   _overridesEditor() {
     const wrap = document.createElement("div");
     wrap.id = "overridesEditor";
+    
     this._overridesWrap = wrap;
-    this._renderOverridesInto(wrap);
+this._renderOverridesInto(wrap);
     return wrap;
   }
 
   _renderOverridesInto(wrap) {
     if (!wrap) return;
-
-    // Preserve current open/closed state before re-creating the DOM
-    try {
-      for (const d of Array.from(wrap.querySelectorAll("details.ov[data-eid]"))) {
-        const eid = d.dataset.eid;
-        if (eid) this._ovOpenState[eid] = !!d.open;
-      }
-    } catch (_) {}
-
     const ents = Array.isArray(this._config?.aqi_entities) ? this._config.aqi_entities : [];
     const overrides = (this._config?.aqi_overrides && typeof this._config.aqi_overrides === "object") ? this._config.aqi_overrides : {};
 
@@ -3943,30 +4062,17 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       const name = st?.attributes?.friendly_name || eid;
       const ov = overrides[eid] || {};
 
-      const det = document.createElement("details");
+      const det = document.createElement("div");
       det.className = "ov";
       det.dataset.eid = eid;
+      const isOpen = this._ovOpenState[eid] === true;
+      if (isOpen) det.classList.add("open");
 
-      // Default is closed, but keep user state across updates
-      if (this._ovOpenState && this._ovOpenState[eid]) det.open = true;
-      det.addEventListener("toggle", () => {
-        this._ovOpenState[eid] = !!det.open;
-      });
-
-      const sum = document.createElement("summary");
+      const sum = document.createElement("button");
+      sum.type = "button";
       sum.className = "ov-sum";
-      sum.innerHTML = `
-        <div class="ov-left">
-          <div class="ov-name">${name}</div>
-          <div class="ov-eid">${eid}</div>
-        </div>
-        <div class="ov-right">
-          <div class="ov-pill" data-pill="name">${ov.name ? "Nom" : "Nom auto"}</div>
-          <div class="ov-pill" data-pill="icon">${ov.icon ? "Icône" : "Icône auto"}</div>
-        </div>
-      `;
-
-      const body = document.createElement("div");
+      sum.setAttribute("aria-expanded", String(isOpen));
+const body = document.createElement("div");
       body.className = "ov-body";
 
       const grid = document.createElement("div");
@@ -4000,20 +4106,28 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       const reset = document.createElement("mwc-button");
       reset.label = "Reset";
       reset.addEventListener("click", () => {
-        // Keep accordion state after reset
-        this._ovOpenState[eid] = !!det.open;
         const next = deepClone(this._config);
         next.aqi_overrides = { ...(next.aqi_overrides || {}) };
         delete next.aqi_overrides[eid];
         this._config = next;
         this._fireConfigChanged(this._config);
-        this._render();
+        this._renderOverridesInto(this._overridesWrap || wrap);
       });
 
       actions.appendChild(reset);
 
       body.appendChild(grid);
       body.appendChild(actions);
+
+      // Accordéon overrides (ouvert/fermé) — stable, sans <details>
+      body.hidden = !isOpen;
+      sum.addEventListener("click", () => {
+        const nextOpen = !det.classList.contains("open");
+        det.classList.toggle("open", nextOpen);
+        body.hidden = !nextOpen;
+        this._ovOpenState[eid] = nextOpen;
+        sum.setAttribute("aria-expanded", String(nextOpen));
+      });
 
       det.appendChild(sum);
       det.appendChild(body);
@@ -4022,6 +4136,23 @@ class Jp2AirQualityCardEditor extends HTMLElement {
 
     wrap.innerHTML = "";
     wrap.appendChild(list);
+  }
+
+  _updateOverrideRowUI(eid) {
+    try {
+      const wrap = this._overridesWrap || this.shadowRoot?.getElementById("overridesEditor");
+      if (!wrap) return;
+      const det = wrap.querySelector(`.ov[data-eid="${CSS.escape(eid)}"]`);
+      if (!det) return;
+
+      const overrides = (this._config?.aqi_overrides && typeof this._config.aqi_overrides === "object") ? this._config.aqi_overrides : {};
+      const ov = overrides[eid] || {};
+
+      const pillName = det.querySelector('.ov-pill[data-pill="name"]');
+      const pillIcon = det.querySelector('.ov-pill[data-pill="icon"]');
+      if (pillName) pillName.textContent = ov.name ? "Nom" : "Nom auto";
+      if (pillIcon) pillIcon.textContent = ov.icon ? "Icône" : "Icône auto";
+    } catch (_) {}
   }
 
   _iconField(label, value) {
@@ -4067,31 +4198,7 @@ class Jp2AirQualityCardEditor extends HTMLElement {
 
     this._config = next;
     this._fireConfigChanged(this._config);
-    // IMPORTANT: ne pas re-render ici.
-    // Sinon le DOM est reconstruit, ce qui fait perdre le focus et referme l’accordéon.
     this._updateOverrideRowUI(eid);
-  }
-
-  _updateOverrideRowUI(eid) {
-    if (!eid) return;
-    const wrap = (this._overridesWrap && this._overridesWrap.isConnected)
-      ? this._overridesWrap
-      : (this.shadowRoot ? this.shadowRoot.getElementById("overridesEditor") : null);
-    if (!wrap) return;
-
-    let det = null;
-    for (const d of Array.from(wrap.querySelectorAll("details.ov[data-eid]"))) {
-      if (d && d.dataset && d.dataset.eid === eid) { det = d; break; }
-    }
-    if (!det) return;
-
-    const ovs = (this._config?.aqi_overrides && typeof this._config.aqi_overrides === "object") ? this._config.aqi_overrides : {};
-    const ov = ovs[eid] || {};
-
-    const namePill = det.querySelector('summary.ov-sum .ov-pill[data-pill="name"]');
-    const iconPill = det.querySelector('summary.ov-sum .ov-pill[data-pill="icon"]');
-    if (namePill) namePill.textContent = ov.name ? "Nom" : "Nom auto";
-    if (iconPill) iconPill.textContent = ov.icon ? "Icône" : "Icône auto";
   }
 
   _fireConfigChanged(cfg) {
@@ -4113,6 +4220,8 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         if (Object.keys(ov).length === 0) delete cleaned.aqi_overrides[eid];
       }
     }
+
+    this._lastFiredConfigStr = jp2StableStringify(cleaned);
 
     this.dispatchEvent(new CustomEvent("config-changed", {
       detail: { config: cleaned },
