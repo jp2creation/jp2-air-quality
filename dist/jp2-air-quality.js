@@ -2,21 +2,41 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v3.0-beta
-  - Ref: visualisateur d’historique plein écran (tap sur le mini-graphe) : plages rapides, stats, tooltips, seuils.
-  - Ref: éditeur visuel v3 : aperçu live de la carte (sensor + AQI) avec presets de largeur (mobile / tablette / desktop).
-  - UX: clic sur l’en-tête/repère ouvre “Plus d’infos” (sensor) ; clic sur le graphe ouvre le visualisateur.
-  - Perf: downsampling de l’historique + cache partagé (mini-graphe + visualiseur).
-  - Back-compat: configs v2.x supportées ; options visualizer_* facultatives.
+  Release notes — v2.0.5
+  - Fix: barre colorée — segments calculés sur les seuils du preset (inclut presets en plage).
+  - Fix: presets — vrais profils en plage pour température/humidité/pression + seuils CO₂/Radon/VOC/PM ajustés.
+  - Fix: repère — mode "Couleur statut" robuste (valeurs legacy + bar.knob_color_mode).
+  - Chore: bump version (import de la base) pour itérations rapides.
+  - Ref: renommage complet du mode multi-capteurs en "AQI" (configs, UI, méthodes).
+  - Fix: éditeur visuel — plus de clés `bar.*` au niveau racine (sync YAML ↔ UI)
+  - Fix: barre colorée (alignement/ombre) + repère non coupé
+  - Ref: refonte totale de l’éditeur visuel (UI fluide + navigation par onglets + aperçu AQI + overrides).
+  - Ref: code restructuré (helpers centralisés, rendu éditeur sans reflow inutile).
+  - Fix: optimisation AQI (clé de rendu basée sur last_changed, throttling rAF).
+  - Ref: éditeur — suppression du bloc de prévisualisation.
+  - Ref: overrides AQI — suppression des tailles cercle/picto + ajout override de nom.
+  - Feat: éditeur AQI — réorganisation des entités (ordre d’affichage).
+  - Feat: AQI — option “Fond transparent par tuile”.
+  - Feat: AQI — icône à gauche du titre (optionnel).
+  - Feat: AQI — option “Contour transparent par tuile”.
+  - Feat: AQI — option “Tuiles (horizontal) : icônes seulement”.
+  - Feat: barre colorée — couleur du repère (thème ou statut).
+  - Feat: barre colorée — taille du contour du repère (épaisseur).
+  - Feat: AQI — option “Air uniquement” (statut global ignore temp/humidité/pression).
+  - Fix: AQI — détection preset améliorée (température/humidité/pression).
+  - Feat: AQI — icône SVG au-dessus du statut global (good/warn/bad) avec couleurs (statut/perso) + cercle/fond optionnels.
+  - Feat: AQI — options aqi_global_svg_position (global/center) + aqi_global_svg_align (left/center/right).
+  - Feat: AQI — personnalisation du statut global (dot/texte) : taille/contour/épaisseur + possibilité de masquer le statut en gardant le SVG.
+  - Feat: AQI — style d’icônes : pictogramme “transparent” (thème) ou “coloré” (statut).
 */
 
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
-const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph, full-screen visualizer, and a live visual editor (v3 beta).";
-const CARD_VERSION = "3.0.0-beta.0";
+const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph and a fluid visual editor (v2).";
+const CARD_VERSION = "2.0.5";
 
 
-const CARD_BUILD_DATE = "2026-02-14";
+const CARD_BUILD_DATE = "2026-02-15";
 // -------------------------
 // Defaults / presets
 // -------------------------
@@ -55,62 +75,6 @@ function toNum(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
-
-function jp2ParseHourRanges(raw, fallback = "6,12,24,72,168") {
-  const max = 12;
-  const normNum = (n) => {
-    const x = Number(n);
-    if (!Number.isFinite(x)) return null;
-    const v = Math.round(x);
-    if (v < 1 || v > 720) return null;
-    return v;
-  };
-
-  const fromString = (s) => String(s || "")
-    .split(/[,;\s]+/g)
-    .map((t) => t.trim())
-    .filter(Boolean)
-    .map(normNum)
-    .filter((v) => v !== null);
-
-  let arr = null;
-  if (Array.isArray(raw)) arr = raw.map(normNum).filter((v) => v !== null);
-  else if (typeof raw === "string") arr = fromString(raw);
-  else if (raw == null || raw === "") arr = fromString(fallback);
-  else arr = fromString(String(raw));
-
-  const out = [];
-  const seen = new Set();
-  for (const v of arr) {
-    if (seen.has(v)) continue;
-    seen.add(v);
-    out.push(v);
-    if (out.length >= max) break;
-  }
-  return out.length ? out : fromString(fallback);
-}
-
-function jp2FormatHourLabel(hours) {
-  const h = Number(hours);
-  if (!Number.isFinite(h) || h <= 0) return String(hours);
-  if (h < 24) return `${h}h`;
-  const d = h / 24;
-  if (Number.isInteger(d)) return `${d}j`;
-  return `${h}h`;
-}
-
-function jp2BestTimestamp(obj) {
-  const keys = ["last_changed", "last_updated", "last_reported", "lc", "lu"];
-  for (const k of keys) {
-    const v = obj && obj[k];
-    if (!v) continue;
-    if (typeof v === "number") return v * 1000;
-    const t = Date.parse(String(v));
-    if (!Number.isNaN(t)) return t;
-  }
-  return null;
-}
-
 
 function normalizeKnobColorMode(cfg) {
   // Accept both new + legacy placements/values:
@@ -417,26 +381,6 @@ class Jp2AirQualityCard extends HTMLElement {
 
     this._lastRenderKey = null; // évite les re-renders inutiles
     this._renderRaf = null; // throttling rAF
-
-    // sensor context (for interactions / visualizer)
-    this._sensorCtx = null;
-
-    // visualizer state
-    this._viz = {
-      open: false,
-      hours: null,
-      smooth: false,
-      showThresholds: true,
-      showStats: true,
-      points: null,
-      preset: null,
-      entityId: null,
-    };
-
-    this._onGraphClick = this._onGraphClick.bind(this);
-    this._onHeaderClick = this._onHeaderClick.bind(this);
-    this._onVizKeyDown = this._onVizKeyDown.bind(this);
-
   }
 
   static getStubConfig() {
@@ -494,13 +438,6 @@ class Jp2AirQualityCard extends HTMLElement {
       graph_color: "",
       graph_warn_color: "",
       graph_bad_color: "",
-
-      // visualizer (full-screen history viewer)
-      visualizer_enabled: true,
-      visualizer_ranges: "6,12,24,72,168",
-      visualizer_show_stats: true,
-      visualizer_show_thresholds: true,
-      visualizer_smooth_default: false,
 
       // thresholds bar colors
       bar: {
@@ -752,13 +689,6 @@ class Jp2AirQualityCard extends HTMLElement {
               { name: "graph_color", selector: { text: {} } },
               { name: "graph_warn_color", selector: { text: {} } },
               { name: "graph_bad_color", selector: { text: {} } },
-
-      // visualizer (tap sur le graphe)
-      { name: "visualizer_enabled", selector: { boolean: {} } },
-      { name: "visualizer_ranges", selector: { text: {} } },
-      { name: "visualizer_show_stats", selector: { boolean: {} } },
-      { name: "visualizer_show_thresholds", selector: { boolean: {} } },
-      { name: "visualizer_smooth_default", selector: { boolean: {} } },
             ],
           },
         ],
@@ -946,14 +876,6 @@ class Jp2AirQualityCard extends HTMLElement {
     merged.preset = String(merged.preset || "radon");
     merged.graph_color_mode = String(merged.graph_color_mode || "segments");
     merged.graph_position = String(merged.graph_position || "below_top");
-
-    // visualizer (full-screen history viewer)
-    merged.visualizer_enabled = merged.visualizer_enabled !== false;
-    merged.visualizer_ranges = String(merged.visualizer_ranges ?? "6,12,24,72,168");
-    merged.visualizer_show_stats = merged.visualizer_show_stats !== false;
-    merged.visualizer_show_thresholds = merged.visualizer_show_thresholds !== false;
-    merged.visualizer_smooth_default = !!merged.visualizer_smooth_default;
-
     merged.aqi_layout = String(merged.aqi_layout || "vertical");
 
 
@@ -1421,8 +1343,6 @@ class Jp2AirQualityCard extends HTMLElement {
 
         .graph { display:none; }
         .graph.show { display:block; }
-        .graph.show.clickable { cursor:pointer; }
-        .graph.show.clickable:hover { filter: brightness(1.03); }
         .graph svg { width: 100%; height: var(--jp2-graph-height, 42px); display:block; }
         .graph .msg { font-size: 12px; opacity: .7; padding: 6px 0 0; }
 
@@ -1464,119 +1384,6 @@ class Jp2AirQualityCard extends HTMLElement {
         .tile-status { display:flex; gap:6px; align-items:center; font-weight: var(--jp2-aqi-status-weight, 700); font-size: var(--jp2-aqi-status-size, inherit); opacity:.85; }
         .tile-val { font-weight: var(--jp2-aqi-value-weight, 900); font-size: var(--jp2-aqi-value-size, 18px); line-height:1; }
         .tile-unit { font-weight: var(--jp2-aqi-unit-weight, 600); font-size: var(--jp2-aqi-unit-size, 12px); opacity:.7; margin-top:2px; }
-        /* Full-screen visualizer */
-        .viz-overlay {
-          position: fixed;
-          inset: 0;
-          display: none;
-          align-items: center;
-          justify-content: center;
-          background: rgba(0,0,0,.45);
-          z-index: 999;
-          padding: 12px;
-          box-sizing: border-box;
-        }
-        .viz-overlay.show { display: flex; }
-        .viz {
-          width: min(940px, calc(100vw - 24px));
-          max-height: calc(100vh - 24px);
-          background: var(--card-background-color, var(--ha-card-background, var(--paper-card-background-color, #fff)));
-          color: var(--primary-text-color);
-          border-radius: 18px;
-          overflow: hidden;
-          box-shadow: 0 18px 48px rgba(0,0,0,.45);
-          border: 1px solid rgba(255,255,255,.12);
-          display: flex;
-          flex-direction: column;
-        }
-        .viz-head {
-          display:flex;
-          align-items:flex-start;
-          justify-content:space-between;
-          gap: 12px;
-          padding: 12px 14px;
-          border-bottom: 1px solid var(--divider-color, rgba(0,0,0,.12));
-          background: rgba(0,0,0,.02);
-        }
-        .viz-title { display:flex; flex-direction:column; gap: 2px; min-width: 0; }
-        .viz-title .t { display:flex; align-items:center; gap: 10px; font-weight: 900; }
-        .viz-title .sub { font-size: 12px; opacity: .75; font-weight: 700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .viz-title .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--primary-color); box-shadow: 0 0 0 2px rgba(0,0,0,.10); flex: 0 0 auto; }
-        .viz-actions { display:flex; gap: 8px; align-items:center; }
-        .viz-btn {
-          cursor:pointer;
-          border: 1px solid var(--divider-color, rgba(0,0,0,.12));
-          border-radius: 12px;
-          padding: 6px 10px;
-          background: var(--secondary-background-color, rgba(0,0,0,.03));
-          color: var(--primary-text-color);
-          font-weight: 900;
-          line-height: 1;
-          user-select: none;
-        }
-        .viz-btn.icon { width: 36px; height: 36px; padding: 0; display:flex; align-items:center; justify-content:center; }
-        .viz-controls {
-          padding: 10px 14px;
-          display:flex;
-          flex-wrap: wrap;
-          gap: 8px;
-          border-bottom: 1px solid var(--divider-color, rgba(0,0,0,.12));
-        }
-        .viz-chip {
-          cursor:pointer;
-          border: 1px solid var(--divider-color, rgba(0,0,0,.12));
-          border-radius: 999px;
-          padding: 6px 10px;
-          background: rgba(0,0,0,.03);
-          font-size: 12px;
-          font-weight: 900;
-          opacity: .95;
-        }
-        .viz-chip.active { background: rgba(3,169,244,.18); border-color: rgba(3,169,244,.35); }
-        .viz-chip.dim { opacity: .7; font-weight: 800; }
-        .viz-body { padding: 12px 14px 14px; display:flex; flex-direction:column; gap: 10px; overflow:auto; }
-        .viz-chart-wrap { position: relative; width: 100%; }
-        .viz-chart-wrap svg {
-          width: 100%;
-          height: min(42vh, 340px);
-          display:block;
-          border-radius: 14px;
-          background: rgba(0,0,0,.03);
-          border: 1px solid var(--divider-color, rgba(0,0,0,.12));
-          touch-action: none;
-        }
-        .viz-tip {
-          position:absolute;
-          left: 0;
-          top: 0;
-          transform: translate(-50%, -110%);
-          pointer-events: none;
-          padding: 8px 10px;
-          border-radius: 12px;
-          background: rgba(0,0,0,.72);
-          color: white;
-          font-size: 12px;
-          font-weight: 800;
-          white-space: nowrap;
-          display: none;
-        }
-        .viz-tip.show { display:block; }
-        .viz-stats { display:flex; flex-wrap: wrap; gap: 10px; }
-        .stat {
-          flex: 1 1 150px;
-          background: rgba(0,0,0,.03);
-          border: 1px solid var(--divider-color, rgba(0,0,0,.12));
-          border-radius: 14px;
-          padding: 10px;
-        }
-        .stat .k { font-size: 11px; opacity: .70; font-weight: 900; }
-        .stat .v { font-size: 16px; font-weight: 900; margin-top: 2px; }
-        @media (max-width: 480px) {
-          .viz { width: calc(100vw - 12px); max-height: calc(100vh - 12px); border-radius: 16px; }
-          .viz-controls { padding: 10px 12px; }
-          .viz-body { padding: 12px; }
-        }
-
       </style>
 
       <ha-card>
@@ -1587,57 +1394,12 @@ class Jp2AirQualityCard extends HTMLElement {
           <div class="aqi" id="aqi"></div>
         </div>
       </ha-card>
-
-      <div class="viz-overlay" id="vizOverlay" aria-hidden="true">
-        <div class="viz" role="dialog" aria-modal="true" aria-label="Visualisateur d'historique">
-          <div class="viz-head">
-            <div class="viz-title">
-              <div class="t"><span class="dot" id="vizDot"></span><span id="vizTitle">Historique</span></div>
-              <div class="sub" id="vizSub"></div>
-            </div>
-            <div class="viz-actions">
-              <button class="viz-btn icon" type="button" id="vizClose" title="Fermer">✕</button>
-            </div>
-          </div>
-          <div class="viz-controls" id="vizControls"></div>
-          <div class="viz-body">
-            <div class="viz-chart-wrap" id="vizChartWrap">
-              <div class="viz-chart" id="vizChart"></div>
-              <div class="viz-tip" id="vizTip"></div>
-            </div>
-            <div class="viz-stats" id="vizStats"></div>
-          </div>
-        </div>
-      </div>
-
     `;
 
     this._root = this.shadowRoot.getElementById("wrap");
     this._header = this.shadowRoot.getElementById("header");
     this._graphWrap = this.shadowRoot.getElementById("graph");
     this._aqiWrap = this.shadowRoot.getElementById("aqi");
-
-    // Interactions (sensor mode)
-    try { this._header?.addEventListener("click", this._onHeaderClick, { passive: true }); } catch (_) {}
-    try { this._graphWrap?.addEventListener("click", this._onGraphClick); } catch (_) {}
-
-    // Visualizer elements
-    this._vizOverlayEl = this.shadowRoot.getElementById("vizOverlay");
-    this._vizTitleEl = this.shadowRoot.getElementById("vizTitle");
-    this._vizSubEl = this.shadowRoot.getElementById("vizSub");
-    this._vizDotEl = this.shadowRoot.getElementById("vizDot");
-    this._vizControlsEl = this.shadowRoot.getElementById("vizControls");
-    this._vizChartEl = this.shadowRoot.getElementById("vizChart");
-    this._vizTipEl = this.shadowRoot.getElementById("vizTip");
-    this._vizStatsEl = this.shadowRoot.getElementById("vizStats");
-
-    const closeBtn = this.shadowRoot.getElementById("vizClose");
-    try { closeBtn?.addEventListener("click", () => this._closeVisualizer()); } catch (_) {}
-    try {
-      this._vizOverlayEl?.addEventListener("click", (ev) => {
-        if (ev?.target === this._vizOverlayEl) this._closeVisualizer();
-      });
-    } catch (_) {}
   }
 
   _setCardBackground(color, enabled) {
@@ -1829,11 +1591,6 @@ class Jp2AirQualityCard extends HTMLElement {
       barWrap.appendChild(bar);
     }
 
-    // Keep context for interactions/visualizer
-    this._sensorCtx = { entityId, preset, title: titleText, unit };
-    try { this._graphWrap?.setAttribute("title", "Clique pour agrandir l'historique"); } catch (_) {}
-    try { this._graphWrap?.classList.toggle("clickable", (this._config?.visualizer_enabled !== false) && (this._config?.show_graph !== false)); } catch (_) {}
-
     this._renderInternalGraph(entityId, preset);
     this._applyGraphPosition();
   }
@@ -1857,418 +1614,6 @@ class Jp2AirQualityCard extends HTMLElement {
       // below_top or inside_top
       wrap.insertBefore(graph, this._aqiWrap);
     }
-  }
-
-
-  // -------------------------
-  // Interactions + Visualizer (full-screen history viewer)
-  // -------------------------
-  _onHeaderClick() {
-    const c = this._config || {};
-    if (String(c.card_mode || "sensor") !== "sensor") return;
-    const entityId = c.entity;
-    if (!entityId) return;
-    this.dispatchEvent(new CustomEvent("hass-more-info", {
-      detail: { entityId },
-      bubbles: true,
-      composed: true,
-    }));
-  }
-
-  _onGraphClick(ev) {
-    const c = this._config || {};
-    if (String(c.card_mode || "sensor") !== "sensor") return;
-    if (c.show_graph === false) return;
-    if (c.visualizer_enabled === false) return;
-    if (!this._sensorCtx || !this._sensorCtx.entityId) return;
-
-    // Avoid accidental open when selecting text etc.
-    try { ev?.preventDefault?.(); } catch (_) {}
-    try { ev?.stopPropagation?.(); } catch (_) {}
-
-    this._openVisualizer(this._sensorCtx);
-  }
-
-  _openVisualizer(ctx) {
-    this._ensureBase();
-    if (!this._vizOverlayEl) return;
-
-    const c = this._config || {};
-    const entityId = ctx?.entityId || c.entity;
-    const preset = String(ctx?.preset || c.preset || "radon");
-    const title = String(ctx?.title || c.name || DEFAULT_NAME_BY_PRESET[preset] || "Historique");
-    const unit = String(ctx?.unit || "");
-
-    // Initialize defaults on first open
-    if (!this._viz.open) {
-      this._viz.hours = clamp(Number(c.hours_to_show || 24), 1, 168);
-      this._viz.smooth = !!c.visualizer_smooth_default;
-      this._viz.showThresholds = (c.visualizer_show_thresholds !== false);
-      this._viz.showStats = (c.visualizer_show_stats !== false);
-    }
-
-    this._viz.open = true;
-    this._viz.entityId = entityId;
-    this._viz.preset = preset;
-    this._viz.title = title;
-    this._viz.unit = unit;
-
-    // Header
-    try { this._vizTitleEl.textContent = title; } catch (_) {}
-    try {
-      const stObj = this._hass?.states?.[entityId];
-      const v = stObj ? toNum(stObj.state) : null;
-      const st = this._statusFor(preset, v);
-      if (this._vizDotEl) this._vizDotEl.style.background = st.color || "var(--primary-color)";
-      if (this._vizSubEl) {
-        const t = stObj?.last_changed || stObj?.last_updated || "";
-        const suffix = unit ? ` ${unit}` : "";
-        const valTxt = (v === null) ? "—" : this._formatValue(preset, v) + suffix;
-        this._vizSubEl.textContent = `${valTxt} • ${st.label || ""}${t ? ` • ${t}` : ""}`.trim();
-      }
-    } catch (_) {}
-
-    // Show overlay
-    this._vizOverlayEl.classList.add("show");
-    this._vizOverlayEl.setAttribute("aria-hidden", "false");
-
-    try { document.addEventListener("keydown", this._onVizKeyDown); } catch (_) {}
-
-    this._renderVisualizer();
-  }
-
-  _closeVisualizer() {
-    if (!this._vizOverlayEl) return;
-    this._viz.open = false;
-    this._viz.points = null;
-    this._vizOverlayEl.classList.remove("show");
-    this._vizOverlayEl.setAttribute("aria-hidden", "true");
-    try { document.removeEventListener("keydown", this._onVizKeyDown); } catch (_) {}
-    try { this._vizTipEl?.classList.remove("show"); } catch (_) {}
-  }
-
-  _onVizKeyDown(ev) {
-    if (!this._viz?.open) return;
-    if (ev?.key === "Escape") {
-      try { ev.preventDefault(); } catch (_) {}
-      this._closeVisualizer();
-    }
-  }
-
-  async _renderVisualizer() {
-    if (!this._viz?.open) return;
-    const entityId = this._viz.entityId;
-    const preset = this._viz.preset;
-    const unit = this._viz.unit || "";
-
-    const c = this._config || {};
-    const ranges = jp2ParseHourRanges(c.visualizer_ranges, "6,12,24,72,168");
-    const hours = clamp(Number(this._viz.hours || c.hours_to_show || 24), 1, 168);
-
-    // Controls
-    if (this._vizControlsEl) {
-      this._vizControlsEl.innerHTML = "";
-      for (const h of ranges) {
-        const chip = el("div", {
-          class: `viz-chip ${h === hours ? "active" : ""}`,
-          role: "button",
-          tabindex: "0",
-          title: `Afficher ${jp2FormatHourLabel(h)}`,
-          onclick: () => {
-            this._viz.hours = h;
-            this._renderVisualizer();
-          },
-        }, [jp2FormatHourLabel(h)]);
-        this._vizControlsEl.appendChild(chip);
-      }
-
-      // toggles
-      const addToggle = (label, active, onClick) => {
-        const chip = el("div", {
-          class: `viz-chip dim ${active ? "active" : ""}`,
-          role: "button",
-          tabindex: "0",
-          onclick: onClick,
-        }, [label]);
-        this._vizControlsEl.appendChild(chip);
-      };
-
-      addToggle("Lissé", !!this._viz.smooth, () => { this._viz.smooth = !this._viz.smooth; this._renderVisualizer(); });
-      addToggle("Seuils", !!this._viz.showThresholds, () => { this._viz.showThresholds = !this._viz.showThresholds; this._renderVisualizer(); });
-      addToggle("Stats", !!this._viz.showStats, () => { this._viz.showStats = !this._viz.showStats; this._renderVisualizer(); });
-    }
-
-    // Loading state
-    if (this._vizChartEl) this._vizChartEl.innerHTML = `<div class="msg" style="padding:10px; font-size:12px; opacity:.75;">Chargement…</div>`;
-    if (this._vizStatsEl) this._vizStatsEl.innerHTML = "";
-
-    // Fetch points
-    const token = (this._vizToken = (this._vizToken || 0) + 1);
-    const rawPoints = await this._getHistoryPoints(entityId, hours);
-    if (!this._viz?.open || token !== this._vizToken) return;
-
-    if (!rawPoints || rawPoints.length < 2) {
-      if (this._vizChartEl) this._vizChartEl.innerHTML = `<div class="msg" style="padding:10px; font-size:12px; opacity:.75;">Historique indisponible</div>`;
-      return;
-    }
-
-    // Extract numeric points + timestamps
-    const extracted = [];
-    for (const p of rawPoints) {
-      const v = toNum(p?.state);
-      if (v === null) continue;
-      const t = jp2BestTimestamp(p);
-      extracted.push({ v, t, raw: p });
-    }
-
-    if (extracted.length < 2) {
-      if (this._vizChartEl) this._vizChartEl.innerHTML = `<div class="msg" style="padding:10px; font-size:12px; opacity:.75;">Historique indisponible</div>`;
-      return;
-    }
-
-    // Downsample for ergonomics/perf
-    const MAX_PTS = 600;
-    const step = Math.max(1, Math.ceil(extracted.length / MAX_PTS));
-    const ds = extracted.filter((_, i) => (i % step === 0) || (i === extracted.length - 1));
-
-    // Ensure timestamps (fallback to uniform distribution)
-    const now = Date.now();
-    const tFallbackStart = now - hours * 3600 * 1000;
-    const t0raw = ds[0]?.t;
-    const t1raw = ds[ds.length - 1]?.t;
-    const hasTime = (t0raw != null && t1raw != null && t1raw > t0raw);
-
-    const t0 = hasTime ? t0raw : tFallbackStart;
-    const t1 = hasTime ? t1raw : now;
-
-    // Optional smoothing (simple moving average)
-    let series = ds.map((p) => ({ ...p }));
-    if (this._viz.smooth && series.length > 3) {
-      series = series.map((p, i) => {
-        const a = series[Math.max(0, i - 1)].v;
-        const b = series[i].v;
-        const c2 = series[Math.min(series.length - 1, i + 1)].v;
-        return { ...p, v: (a + b + c2) / 3 };
-      });
-    }
-
-    const pc = this._presetConfig(preset);
-    const ys = series.map((p) => p.v);
-    const minY = isNum(pc.min) ? pc.min : Math.min(...ys);
-    const maxY = isNum(pc.max) ? pc.max : Math.max(...ys);
-    const pad = (maxY - minY) * 0.06 || 1;
-    const y0 = minY - pad;
-    const y1 = maxY + pad;
-
-    const W = 1000;
-    const H = 300;
-
-    const points = series.map((p, i) => {
-      const tt = hasTime ? (p.t != null ? p.t : (t0 + (i / (series.length - 1)) * (t1 - t0))) : (t0 + (i / (series.length - 1)) * (t1 - t0));
-      const x = (t1 > t0) ? ((tt - t0) / (t1 - t0)) * W : (i / (series.length - 1)) * W;
-      const y = H - ((p.v - y0) / (y1 - y0)) * H;
-      return { x, y, v: p.v, t: tt };
-    });
-
-    if (points.length < 2) {
-      if (this._vizChartEl) this._vizChartEl.innerHTML = `<div class="msg" style="padding:10px; font-size:12px; opacity:.75;">Historique indisponible</div>`;
-      return;
-    }
-
-    const colors = this._colors();
-    const baseColor = c.graph_color || "var(--primary-color)";
-    const warnColor = c.graph_warn_color || colors.warn;
-    const badColor = c.graph_bad_color || colors.bad;
-
-    // Build SVG
-    const thresholdLines = [];
-    if (this._viz.showThresholds) {
-      const mkLine = (val, label) => {
-        const y = H - ((val - y0) / (y1 - y0)) * H;
-        if (!Number.isFinite(y)) return;
-        thresholdLines.push(`<line x1="0" y1="${y.toFixed(2)}" x2="${W}" y2="${y.toFixed(2)}" stroke="${cssColorMix("var(--divider-color)", 70)}" stroke-width="1" stroke-dasharray="4 5" />`);
-        thresholdLines.push(`<text x="${(W - 6)}" y="${(y - 6).toFixed(2)}" text-anchor="end" font-size="12" font-weight="800" fill="${cssColorMix("var(--secondary-text-color)", 10)}">${_jp2EscapeHtml(label)}</text>`);
-      };
-
-      if (String(pc.type) === "band") {
-        if (isNum(pc.warn_low_min)) mkLine(pc.warn_low_min, `warn ${pc.warn_low_min}`);
-        if (isNum(pc.good_min)) mkLine(pc.good_min, `good ${pc.good_min}`);
-        if (isNum(pc.good_max_band)) mkLine(pc.good_max_band, `good ${pc.good_max_band}`);
-        if (isNum(pc.warn_high_max)) mkLine(pc.warn_high_max, `warn ${pc.warn_high_max}`);
-      } else {
-        if (isNum(pc.good_max)) mkLine(pc.good_max, `good ${pc.good_max}`);
-        if (isNum(pc.warn_max)) mkLine(pc.warn_max, `warn ${pc.warn_max}`);
-      }
-    }
-
-    const mode = String(c.graph_color_mode || "segments");
-
-    const segPaths = [];
-    const buildSeg = (a, b, col) => {
-      const d = `M ${a.x.toFixed(2)} ${a.y.toFixed(2)} L ${b.x.toFixed(2)} ${b.y.toFixed(2)}`;
-      segPaths.push(`<path d="${d}" fill="none" stroke="${col}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />`);
-    };
-
-    if (mode === "single") {
-      const d = points.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ");
-      segPaths.push(`<path d="${d}" fill="none" stroke="${baseColor}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />`);
-    } else {
-      for (let i = 0; i < points.length - 1; i++) {
-        const a = points[i], b = points[i + 1];
-        const st = this._statusFor(preset, (a.v + b.v) / 2);
-        const col = st.level === "warn" ? warnColor : st.level === "bad" ? badColor : baseColor;
-        buildSeg(a, b, col);
-      }
-      if (mode === "peaks") {
-        for (const p of points) {
-          const st = this._statusFor(preset, p.v);
-          if (st.level === "warn" || st.level === "bad") {
-            const col = st.level === "warn" ? warnColor : badColor;
-            segPaths.push(`<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="4" fill="${col}" opacity="0.95" />`);
-          }
-        }
-      }
-    }
-
-    const svg = `
-      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Historique détaillé">
-        <defs>
-          <linearGradient id="jp2VizFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${baseColor}" stop-opacity="0.22" />
-            <stop offset="100%" stop-color="${baseColor}" stop-opacity="0" />
-          </linearGradient>
-        </defs>
-
-        ${thresholdLines.join("")}
-
-        <path d="${points.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ")} L ${W} ${H} L 0 ${H} Z"
-              fill="url(#jp2VizFill)" opacity="1" />
-        ${segPaths.join("")}
-
-        <line id="vizCursorLine" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(0,0,0,.25)" stroke-width="1" style="display:none" />
-        <circle id="vizCursorDot" cx="0" cy="0" r="5" fill="${baseColor}" stroke="rgba(255,255,255,.8)" stroke-width="2" style="display:none" />
-      </svg>
-    `;
-
-    if (this._vizChartEl) {
-      this._vizChartEl.innerHTML = svg;
-      const svgEl = this._vizChartEl.querySelector("svg");
-      if (svgEl) {
-        this._viz.points = points;
-        svgEl.addEventListener("pointermove", (ev) => this._onVizPointerMove(ev, svgEl, W, H, unit, preset));
-        svgEl.addEventListener("pointerdown", (ev) => this._onVizPointerMove(ev, svgEl, W, H, unit, preset));
-        svgEl.addEventListener("pointerleave", () => this._hideVizTip(svgEl));
-      }
-    }
-
-    // Stats
-    if (this._vizStatsEl) {
-      if (!this._viz.showStats) {
-        this._vizStatsEl.innerHTML = "";
-      } else {
-        const first = points[0];
-        const last = points[points.length - 1];
-        const minV = Math.min(...points.map((p) => p.v));
-        const maxV = Math.max(...points.map((p) => p.v));
-        const avgV = points.reduce((a, p) => a + p.v, 0) / points.length;
-        const delta = last.v - first.v;
-
-        const suffix = unit ? ` ${unit}` : "";
-        const fmt = (v) => this._formatValue(preset, v) + suffix;
-
-        const items = [
-          { k: "Actuel", v: fmt(last.v) },
-          { k: "Min", v: fmt(minV) },
-          { k: "Max", v: fmt(maxV) },
-          { k: "Moyenne", v: fmt(avgV) },
-          { k: "Δ", v: (delta >= 0 ? "+" : "") + this._formatValue(preset, delta) + suffix },
-        ];
-
-        this._vizStatsEl.innerHTML = "";
-        for (const it of items) {
-          this._vizStatsEl.appendChild(el("div", { class: "stat" }, [
-            el("div", { class: "k" }, [it.k]),
-            el("div", { class: "v" }, [it.v]),
-          ]));
-        }
-      }
-    }
-  }
-
-  _hideVizTip(svgEl) {
-    try {
-      const line = svgEl?.querySelector("#vizCursorLine");
-      const dot = svgEl?.querySelector("#vizCursorDot");
-      if (line) line.style.display = "none";
-      if (dot) dot.style.display = "none";
-    } catch (_) {}
-    try { this._vizTipEl?.classList.remove("show"); } catch (_) {}
-  }
-
-  _onVizPointerMove(ev, svgEl, W, H, unit, preset) {
-    if (!this._viz?.open || !this._viz?.points || !this._vizTipEl) return;
-    const pts = this._viz.points;
-    if (!pts.length) return;
-
-    const rect = svgEl.getBoundingClientRect();
-    const xPx = clamp((ev.clientX - rect.left), 0, rect.width);
-    const xSvg = (rect.width > 0) ? (xPx / rect.width) * W : 0;
-
-    // binary-ish nearest (pts are sorted by x)
-    let lo = 0, hi = pts.length - 1;
-    while (hi - lo > 6) {
-      const mid = (lo + hi) >> 1;
-      if (pts[mid].x < xSvg) lo = mid;
-      else hi = mid;
-    }
-    let best = lo;
-    let bestDist = Infinity;
-    for (let i = lo; i <= hi; i++) {
-      const d = Math.abs(pts[i].x - xSvg);
-      if (d < bestDist) { bestDist = d; best = i; }
-    }
-    const p = pts[best];
-
-    // cursor
-    try {
-      const line = svgEl.querySelector("#vizCursorLine");
-      const dot = svgEl.querySelector("#vizCursorDot");
-      if (line) {
-        line.setAttribute("x1", p.x.toFixed(2));
-        line.setAttribute("x2", p.x.toFixed(2));
-        line.style.display = "";
-      }
-      if (dot) {
-        dot.setAttribute("cx", p.x.toFixed(2));
-        dot.setAttribute("cy", p.y.toFixed(2));
-        const st = this._statusFor(preset, p.v);
-        dot.setAttribute("fill", st.color || "var(--primary-color)");
-        dot.style.display = "";
-      }
-    } catch (_) {}
-
-    // tooltip
-    const locale = this._hass?.locale?.language || navigator.language || "fr-FR";
-    const dt = new Date(p.t);
-    const isLong = (Number(this._viz.hours || 0) >= 48);
-    const dtTxt = isLong
-      ? dt.toLocaleString(locale, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
-      : dt.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
-
-    const suffix = unit ? ` ${unit}` : "";
-    const valTxt = this._formatValue(preset, p.v) + suffix;
-    const st = this._statusFor(preset, p.v);
-
-    this._vizTipEl.textContent = `${valTxt} • ${st.label || ""} • ${dtTxt}`.trim();
-
-    // position
-    const yPx = (rect.height > 0) ? (p.y / H) * rect.height : 0;
-    const tipX = clamp(xPx, 42, rect.width - 42);
-    const tipY = clamp(yPx, 26, rect.height - 20);
-
-    this._vizTipEl.style.left = `${tipX}px`;
-    this._vizTipEl.style.top = `${tipY}px`;
-    this._vizTipEl.classList.add("show");
   }
 
   _formatValue(preset, value) {
@@ -2775,9 +2120,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     this._tab = "general";
     this._raf = null;
 
-    // Live preview (visualizer) in the editor
-    this._previewWidth = 420; // px (0 = auto)
-
     this._onTabClick = this._onTabClick.bind(this);
     this._onFormValueChanged = this._onFormValueChanged.bind(this);
     this._onOverridesChanged = this._onOverridesChanged.bind(this);
@@ -2790,7 +2132,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       try { f.hass = hass; } catch (_) {}
     }
     this._renderAqiPreview();
-    this._updateLivePreview();
   }
 
   setConfig(config) {
@@ -2807,14 +2148,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       merged.preset = String(merged.preset || "radon");
       merged.graph_color_mode = String(merged.graph_color_mode || "segments");
       merged.graph_position = String(merged.graph_position || "below_top");
-
-      // visualizer (full-screen history viewer)
-      merged.visualizer_enabled = merged.visualizer_enabled !== false;
-      merged.visualizer_ranges = String(merged.visualizer_ranges ?? "6,12,24,72,168");
-      merged.visualizer_show_stats = merged.visualizer_show_stats !== false;
-      merged.visualizer_show_thresholds = merged.visualizer_show_thresholds !== false;
-      merged.visualizer_smooth_default = !!merged.visualizer_smooth_default;
-
       merged.aqi_layout = String(merged.aqi_layout || "vertical");
 
       merged.aqi_entities = Array.isArray(merged.aqi_entities) ? merged.aqi_entities : [];
@@ -3012,42 +2345,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         mwc-button { --mdc-theme-primary: var(--primary-color); }
 
         .footer { font-size: 12px; opacity: .65; padding: 2px 2px 0; }
-        /* Live preview (visualizer) */
-        .preview-grid { display:flex; flex-direction:column; gap: 10px; }
-        .preview-toolbar {
-          display:flex;
-          align-items:center;
-          justify-content:space-between;
-          gap: 10px;
-          flex-wrap: wrap;
-        }
-        .preview-btns { display:flex; gap: 8px; flex-wrap: wrap; }
-        .pbtn {
-          border: 1px solid rgba(0,0,0,.10);
-          background: rgba(0,0,0,.03);
-          color: var(--primary-text-color);
-          border-radius: 999px;
-          padding: 8px 12px;
-          font-weight: 800;
-          font-size: 12px;
-          cursor: pointer;
-          transition: transform .08s ease, background .12s ease, border-color .12s ease;
-        }
-        .pbtn:hover { background: rgba(0,0,0,.06); }
-        .pbtn:active { transform: translateY(1px); }
-        .pbtn.active { background: rgba(76,175,80,.18); border-color: rgba(76,175,80,.35); }
-        .preview-note { font-size: 12px; opacity: .75; font-weight: 700; }
-        .preview-stage {
-          border-radius: 18px;
-          padding: 12px;
-          border: 1px dashed rgba(0,0,0,.18);
-          background: rgba(0,0,0,.02);
-          display:flex;
-          justify-content:center;
-        }
-        .preview-frame { max-width: 100%; }
-        .preview-frame > * { width: 100%; }
-
       </style>
 
       <div class="wrap">
@@ -3103,9 +2400,8 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       try { f.hass = this._hass; } catch (_) {}
     }
 
-    // Refresh previews
+    // Refresh preview if present
     this._renderAqiPreview();
-    this._updateLivePreview();
   }
 
   _buildTabs() {
@@ -3127,98 +2423,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     ];
   }
 
-  
-
-  // Live visualizer inside the editor (real card preview)
-  _livePreview() {
-    const wrap = document.createElement("div");
-    wrap.className = "preview-grid";
-
-    const toolbar = document.createElement("div");
-    toolbar.className = "preview-toolbar";
-
-    const left = document.createElement("div");
-    left.className = "preview-btns";
-
-    const mkBtn = (label, w, title) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "pbtn";
-      b.dataset.pw = String(w);
-      b.title = title || label;
-      b.textContent = label;
-      return b;
-    };
-
-    const btnMobile = mkBtn("Mobile", 360, "Largeur 360px");
-    const btnTablet = mkBtn("Tablette", 520, "Largeur 520px");
-    const btnDesktop = mkBtn("Desktop", 760, "Largeur 760px");
-    const btnAuto = mkBtn("Auto", 0, "Largeur automatique");
-
-    left.appendChild(btnMobile);
-    left.appendChild(btnTablet);
-    left.appendChild(btnDesktop);
-    left.appendChild(btnAuto);
-
-    const note = document.createElement("div");
-    note.className = "preview-note";
-    note.textContent = "L’aperçu est interactif (clic sur le graphe → visualisateur).";
-
-    toolbar.appendChild(left);
-    toolbar.appendChild(note);
-
-    const stage = document.createElement("div");
-    stage.className = "preview-stage";
-
-    const frame = document.createElement("div");
-    frame.className = "preview-frame";
-    frame.style.width = this._previewWidth ? `${this._previewWidth}px` : "100%";
-
-    const card = document.createElement(CARD_TYPE);
-    card.id = "liveCard";
-    frame.appendChild(card);
-    stage.appendChild(frame);
-
-    const setActive = () => {
-      const w = Number(this._previewWidth || 0);
-      for (const b of [btnMobile, btnTablet, btnDesktop, btnAuto]) b.classList.remove("active");
-      if (!w) btnAuto.classList.add("active");
-      else if (w <= 380) btnMobile.classList.add("active");
-      else if (w <= 600) btnTablet.classList.add("active");
-      else btnDesktop.classList.add("active");
-    };
-
-    const setWidth = (w) => {
-      this._previewWidth = Number(w || 0);
-      frame.style.width = this._previewWidth ? `${this._previewWidth}px` : "100%";
-      setActive();
-    };
-
-    wrap.addEventListener("click", (ev) => {
-      const btn = ev.composedPath?.().find((n) => n && n.dataset && n.dataset.pw);
-      if (!btn) return;
-      setWidth(Number(btn.dataset.pw));
-      // Update preview after resizing to keep layout crisp
-      this._updateLivePreview();
-    });
-
-    wrap.appendChild(toolbar);
-    wrap.appendChild(stage);
-
-    setActive();
-    // Update preview on next tick (DOM must exist)
-    queueMicrotask(() => this._updateLivePreview());
-
-    return wrap;
-  }
-
-  _updateLivePreview() {
-    const card = this.shadowRoot?.getElementById("liveCard");
-    if (!card || !this._config) return;
-    try { card.hass = this._hass; } catch (_) {}
-    try { card.setConfig(deepClone(this._config)); } catch (_) {}
-  }
-
   _onTabClick(ev) {
     const btn = ev.composedPath?.().find((n) => n && n.dataset && n.dataset.tab);
     if (!btn) return;
@@ -3235,12 +2439,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     if (!this._config) return root;
 
     const isAqi = this._isAqi;
-
-    root.appendChild(this._section(
-      "Aperçu en direct",
-      "Prévisualisation instantanée de la carte (pratique pour ajuster les tailles et l’ergonomie).",
-      this._livePreview()
-    ));
 
     // ---- SENSOR MODE TABS ----
     if (!isAqi) {
@@ -3449,11 +2647,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       graph_color: "Couleur ligne",
       graph_warn_color: "Couleur warn",
       graph_bad_color: "Couleur bad",
-      visualizer_enabled: "Visualiseur (plein écran)",
-      visualizer_ranges: "Plages rapides (heures)",
-      visualizer_show_stats: "Afficher stats (visualiseur)",
-      visualizer_show_thresholds: "Afficher seuils (visualiseur)",
-      visualizer_smooth_default: "Lissé par défaut",
       // bar colors
       good: "Bon (couleur)",
       warn: "Moyen (couleur)",
@@ -3536,11 +2729,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       graph_color: "Ex: #03a9f4 (laisse vide pour auto).",
       graph_warn_color: "Couleur pour la zone warn (pics/segments).",
       graph_bad_color: "Couleur pour la zone bad (pics/segments).",
-      visualizer_enabled: "Si activé, clic/tap sur le mini-graphe ouvre un visualiseur plein écran.",
-      visualizer_ranges: "Liste des plages rapides (en heures), ex: 6,12,24,72,168.",
-      visualizer_show_stats: "Affiche les stats (min/max/moyenne/Δ) sous le graphe du visualiseur.",
-      visualizer_show_thresholds: "Affiche les lignes de seuils (good/warn) dans le visualiseur.",
-      visualizer_smooth_default: "Applique un lissage léger par défaut dans le visualiseur.",
       good: "Couleur du statut “Bon”.",
       warn: "Couleur du statut “Moyen”.",
       bad: "Couleur du statut “Mauvais”.",
@@ -3744,14 +2932,7 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       ], mode: "dropdown" } } },
       { name: "graph_color", selector: { text: {} } },
       { name: "graph_warn_color", selector: { text: {} } },
-            { name: "graph_bad_color", selector: { text: {} } },
-
-      // visualizer (tap sur le graphe)
-      { name: "visualizer_enabled", selector: { boolean: {} } },
-      { name: "visualizer_ranges", selector: { text: {} } },
-      { name: "visualizer_show_stats", selector: { boolean: {} } },
-      { name: "visualizer_show_thresholds", selector: { boolean: {} } },
-      { name: "visualizer_smooth_default", selector: { boolean: {} } },
+      { name: "graph_bad_color", selector: { text: {} } },
     ];
   }
 
