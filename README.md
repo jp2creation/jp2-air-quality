@@ -15,9 +15,7 @@
 -- **[Examples](#examples)**
 -- **[Options](#options)**
 -- **[Visual editor](#visual-editor)**
---
 
-<br>
 </div>
 
 <br>
@@ -33,8 +31,7 @@ A **Home Assistant Lovelace** card with a clean **dashboard look** to display **
 > 
 <br>
 
-<img src="docs/images/dash1.png" alt="JP2 Air Quality Card preview" width="100%">
-
+---
 
 ## Installation
 
@@ -84,7 +81,7 @@ entities:
 <br>
 
 ---
-<img src="docs/images/aqi-icon.png" alt="JP2 Air Quality Card preview" width="40%"><img src="docs/images/aqi-capteurs.png" alt="JP2 Air Quality Card preview" width="40%">
+<img src="docs/images/aqi-icon.png" alt="JP2 Air Quality Card preview" width="30%"><img src="docs/images/aqi-capteurs.png" alt="JP2 Air Quality Card preview" width="30%"><img src="docs/images/dash1.png" alt="JP2 Air Quality Card preview" width="30%">
 
 <br>
 
