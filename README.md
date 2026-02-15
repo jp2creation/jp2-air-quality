@@ -9,6 +9,7 @@
 [![Latest Version][version_shield]][releases]
 [![Buy me a coffee][buy_me_a_coffee_shield]][buy_me_a_coffee]
 
+
 </div>
 
 <br>
@@ -18,8 +19,9 @@
 A **Home Assistant Lovelace** card with a clean **dashboard look** to display **air quality & comfort** at a glance  
 (CO₂, VOC, radon, pressure, temperature, humidity… from airthings, netatmo, Xiaomi and others devices ) with a **colored gauge**, a **status label**, an optional **AQI summary**, and an integrated **history graph**.
 
-> [!NOTE]  
-> If an option is not available in your version, it is simply ignored.
+> [!NOTE]
+> <img src="docs/images/airthings.png" alt="airthings" height="20px"> <img src="docs/images/xiaomi.png" alt="xiaomi" height="20px"> <img src="docs/images/netatmo.png" alt="netatmo" height="20px"> <img src="docs/images/sonoff.png" alt="sonoff" height="20px"> <img src="docs/images/tuya.png" alt="tuya" height="20px"> ...<br>
+> This module supports values from any Home Assistant–compatible sensor, so you can display and interpret indoor air quality from all your entities in one unified card.
 
 <br>
 
