@@ -471,6 +471,6 @@ If this project helps you, you can support it here: **[Buy me a coffee][buy_me_a
 [version_shield]: https://img.shields.io/badge/Lovelace-Home_Assistant-blue
 [downloads_total_shield]: https://img.shields.io/github/downloads/jp2creation/jp2-air-quality/total
 [releases]: https://github.com/jp2creation/jp2-air-quality/releases
-[buy_me_a_coffee_shield]: https://img.shields.io/badge/Buy%20me%20a%20coffee-support-yellow.svg
+[buy_me_a_coffee_shield]: https://img.shields.io/badge/Buy%20me%20a%20coffee-support-white.svg
 [buy_me_a_coffee]: https://www.buymeacoffee.com/jp2creation
 
