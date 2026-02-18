@@ -2,7 +2,15 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.1.0 (version actuelle)
+  Release notes — v2.1.3 (version actuelle)
+  - Fix: fallback color-mix Safari/vars CSS (résolution via computedStyle).
+  - Fix: refresh key inclut unit_of_measurement + last_updated.
+  - Fix: mini-graphe interne basé sur timestamps + downsample (perf).
+
+  - Perf: cache historique limité (LRU) pour éviter la croissance infinie.
+  - A11y: header + graphe + listes AQI activables au clavier (Tab/Enter/Espace).
+  - Theme: knob outline utilise la couleur de fond réelle de la carte (moins agressif en thème sombre).
+
   - Presets : ajout d’une option “Personnalisé (capteur libre)” pour intégrer un capteur sans preset pré-enregistré.
   - Éditeur : l’accordéon “Preset personnalisé” apparaît immédiatement quand ce preset est sélectionné (sans devoir enregistrer).
 
@@ -23,10 +31,10 @@
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph, full-screen visualizer, and a fluid visual editor (v2).";
-const CARD_VERSION = "2.1.0";
+const CARD_VERSION = "2.1.3";
 
 
-const CARD_BUILD_DATE = "2026-02-15";
+const CARD_BUILD_DATE = "2026-02-18";
 // -------------------------
 // Defaults / presets
 // -------------------------
@@ -193,14 +201,88 @@ const _JP2_UA = (typeof navigator !== "undefined" && navigator.userAgent) ? navi
 const _JP2_IS_SAFARI = /Safari/i.test(_JP2_UA) && !/(Chrome|Chromium|Edg|OPR)/i.test(_JP2_UA);
 const _JP2_SUPPORTS_COLOR_MIX = !_JP2_IS_SAFARI && (typeof CSS !== "undefined") && CSS.supports && CSS.supports("color", "color-mix(in srgb, #000 10%, transparent)");
 
-function cssColorMix(color, pct) {
+let _JP2_COLOR_PROBE = null;
+const _JP2_COLOR_CACHE = new WeakMap();
+
+/**
+ * Resolve any CSS color (including var(--*), named colors, hsl(), etc.) to rgba(),
+ * and apply a multiplicative alpha.
+ * scopeEl allows correct resolution when card-mod overrides vars at the card level.
+ */
+function jp2ResolveCssColorToRgba(color, alpha = 1, scopeEl) {
+  try {
+    const aMul = Math.max(0, Math.min(1, Number(alpha)));
+    const c = String(color || "").trim();
+    if (!c) return "rgba(0,0,0,0)";
+
+    // Fast path: already rgb/rgba
+    const direct = c.match(/rgba?\(([^)]+)\)/i);
+    if (direct) {
+      const parts = direct[1].split(",").map((s) => s.trim());
+      const r = Number(parts[0]);
+      const g = Number(parts[1]);
+      const b = Number(parts[2]);
+      let a0 = parts.length > 3 ? Number(parts[3]) : 1;
+      if (!isFinite(a0)) a0 = 1;
+      const a = Math.max(0, Math.min(1, a0 * aMul));
+      return `rgba(${r},${g},${b},${a.toFixed(3)})`;
+    }
+
+    const scope = (scopeEl && scopeEl.appendChild) ? scopeEl : document.documentElement;
+    let perScope = _JP2_COLOR_CACHE.get(scope);
+    if (!perScope) {
+      perScope = new Map();
+      _JP2_COLOR_CACHE.set(scope, perScope);
+    }
+
+    let computed = perScope.get(c);
+    if (!computed) {
+      if (!_JP2_COLOR_PROBE) {
+        _JP2_COLOR_PROBE = document.createElement("span");
+        _JP2_COLOR_PROBE.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none;";
+      }
+
+      _JP2_COLOR_PROBE.style.color = c;
+
+      // Ensure probe is attached under the right scope for CSS variable resolution
+      if (!_JP2_COLOR_PROBE.isConnected || _JP2_COLOR_PROBE.parentNode !== scope) {
+        try { _JP2_COLOR_PROBE.remove(); } catch (_) {}
+        try { scope.appendChild(_JP2_COLOR_PROBE); } catch (_) { document.documentElement.appendChild(_JP2_COLOR_PROBE); }
+      }
+
+      computed = getComputedStyle(_JP2_COLOR_PROBE).color || "rgba(0,0,0,0)";
+      perScope.set(c, computed);
+
+      // Avoid unbounded growth (rare)
+      if (perScope.size > 80) perScope.clear();
+    }
+
+    const m = computed.match(/rgba?\(([^)]+)\)/i);
+    if (!m) return "rgba(0,0,0,0)";
+    const parts = m[1].split(",").map((s) => s.trim());
+    const r = Number(parts[0]);
+    const g = Number(parts[1]);
+    const b = Number(parts[2]);
+    let a0 = parts.length > 3 ? Number(parts[3]) : 1;
+    if (!isFinite(a0)) a0 = 1;
+
+    const a = Math.max(0, Math.min(1, a0 * aMul));
+    return `rgba(${r},${g},${b},${a.toFixed(3)})`;
+  } catch (_) {
+    return "rgba(0,0,0,0)";
+  }
+}
+
+function cssColorMix(color, pct, scopeEl) {
   const p = clamp(pct, 0, 100);
   if (_JP2_SUPPORTS_COLOR_MIX) return `color-mix(in srgb, ${color} ${p}%, transparent)`;
-  // Fallback léger (évite certains gels WebKit). Si la couleur est un hex, on génère un rgba.
+
+  // Fast hex fallback (perf-friendly)
   const c = String(color || "").trim();
   const m3 = /^#([0-9a-fA-F]{3})$/.exec(c);
   const m6 = /^#([0-9a-fA-F]{6})$/.exec(c);
-  let r=null,g=null,b=null;
+  let r = null, g = null, b = null;
+
   if (m3) {
     const h = m3[1];
     r = parseInt(h[0] + h[0], 16);
@@ -208,15 +290,18 @@ function cssColorMix(color, pct) {
     b = parseInt(h[2] + h[2], 16);
   } else if (m6) {
     const h = m6[1];
-    r = parseInt(h.slice(0,2), 16);
-    g = parseInt(h.slice(2,4), 16);
-    b = parseInt(h.slice(4,6), 16);
+    r = parseInt(h.slice(0, 2), 16);
+    g = parseInt(h.slice(2, 4), 16);
+    b = parseInt(h.slice(4, 6), 16);
   }
+
   if (r !== null) {
     const a = Math.max(0, Math.min(1, p / 100));
     return `rgba(${r},${g},${b},${a.toFixed(3)})`;
   }
-  return "transparent";
+
+  // Universal fallback (vars/named/hsl)
+  return jp2ResolveCssColorToRgba(c, p / 100, scopeEl);
 }
 
 
@@ -471,6 +556,7 @@ class Jp2AirQualityCard extends HTMLElement {
 
     this._historyCache = new Map(); // key -> { ts, points }
     this._historyInflight = new Map(); // key -> promise
+    this._historyCacheMax = 30; // LRU max entries
 
     this._lastRenderKey = null; // évite les re-renders inutiles
     this._renderRaf = null; // throttling rAF
@@ -1109,7 +1195,9 @@ class Jp2AirQualityCard extends HTMLElement {
     if (!eid) return "sensor:none";
     const st = hass?.states?.[eid];
     if (!st) return `sensor:${eid}:missing`;
-    return `sensor:${eid}:${st.state}:${st.last_changed || ""}`;
+    const u = st.attributes && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : "";
+    const lu = st.last_updated || st.last_changed || "";
+    return `sensor:${eid}:${st.state}:${u}:${lu}`;
   }
 
   _buildAqiKey(hass) {
@@ -1538,7 +1626,7 @@ if (p === "custom") {
         .bar-inner .seg.bad { background: var(--jp2-bad); }
 
         .knob { position:absolute; top: 50%; transform: translate(-50%, -50%); z-index: 2; width: var(--jp2-knob-size, 12px); height: var(--jp2-knob-size, 12px); border-radius:999px; background: var(--jp2-knob-color, var(--primary-color)); }
-        .knob.outline { --_o: var(--jp2-knob-outline-size, 2px); box-shadow: 0 0 0 var(--_o) rgba(255,255,255,.95), 0 0 0 calc(var(--_o) + 1px) rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.35); }
+        .knob.outline { --_o: var(--jp2-knob-outline-size, 2px); box-shadow: 0 0 0 var(--_o) var(--jp2-card-bg, rgba(255,255,255,.95)), 0 0 0 calc(var(--_o) + 1px) rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.35); }
         .knob.shadow { filter: drop-shadow(0 1px 1px rgba(0,0,0,.35)); }
 
         .graph { display:none; }
@@ -1743,6 +1831,10 @@ if (p === "custom") {
     try { this._header?.addEventListener("click", this._onHeaderClick, { passive: true }); } catch (_) {}
     try { this._graphWrap?.addEventListener("click", this._onGraphClick); } catch (_) {}
 
+    // Accessibility: keyboard activation
+    this._a11yMakeButton(this._header, this._onHeaderClick);
+    this._a11yMakeButton(this._graphWrap, this._onGraphClick);
+
     // Visualizer elements
     this._vizOverlayEl = this.shadowRoot.getElementById("vizOverlay");
     this._vizTitleEl = this.shadowRoot.getElementById("vizTitle");
@@ -1762,6 +1854,50 @@ if (p === "custom") {
     } catch (_) {}
   }
 
+  _historyGet(key) {
+    try {
+      const v = this._historyCache.get(key);
+      if (v) {
+        // LRU: refresh insertion order
+        this._historyCache.delete(key);
+        this._historyCache.set(key, v);
+      }
+      return v;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  _historySet(key, value) {
+    try {
+      if (this._historyCache.has(key)) this._historyCache.delete(key);
+      this._historyCache.set(key, value);
+      const max = Number(this._historyCacheMax) > 0 ? Number(this._historyCacheMax) : 30;
+      while (this._historyCache.size > max) {
+        const firstKey = this._historyCache.keys().next().value;
+        this._historyCache.delete(firstKey);
+      }
+    } catch (_) {}
+  }
+
+  _a11yMakeButton(el, onActivate) {
+    try {
+      if (!el) return;
+      if (el.getAttribute("data-jp2-a11y") === "1") return;
+      el.setAttribute("data-jp2-a11y", "1");
+      el.setAttribute("role", "button");
+      if (!el.hasAttribute("tabindex")) el.tabIndex = 0;
+      el.addEventListener("keydown", (e) => {
+        const k = e?.key;
+        if (k === "Enter" || k === " ") {
+          e.preventDefault();
+          onActivate?.(e);
+        }
+      });
+    } catch (_) {}
+  }
+
+
   _setCardBackground(color, enabled) {
     const card = this.shadowRoot.querySelector("ha-card");
     if (!card) return;
@@ -1772,6 +1908,13 @@ if (p === "custom") {
       card.style.background = "";
       card.style.backgroundColor = "";
     }
+
+    // Expose the real card background color for CSS (e.g., knob outline) — theme friendly
+    try {
+      const bg = getComputedStyle(card).backgroundColor || "rgb(255,255,255)";
+      card.style.setProperty("--jp2-card-bg", jp2ResolveCssColorToRgba(bg, 0.95, card));
+    } catch (_) {}
+
   }
 
   _render() {
@@ -2406,6 +2549,7 @@ if (p === "custom") {
   async _renderInternalGraph(entityId, preset) {
     const c = this._config;
     const graph = this._graphWrap;
+    const card = (this.shadowRoot && this.shadowRoot.querySelector) ? this.shadowRoot.querySelector("ha-card") : null;
     if (!graph) return;
 
     const enabled = c.show_graph !== false;
@@ -2447,26 +2591,46 @@ if (p === "custom") {
 
     const w = 400;
     const h = 100;
-    const n = points.length;
 
-    const xy = points
+    // Use timestamps when available (faithful graph even with irregular sampling)
+    const total = points.length;
+    const nowT = Date.now();
+    const startT = nowT - hours * 3600000;
+    const spanT = Math.max(1, nowT - startT);
+
+    const extracted = points
       .map((p, i) => {
         const v = toNum(p.state);
         if (v === null) return null;
-        const x = (i / (n - 1)) * w;
-        const y = h - ((v - y0) / (y1 - y0)) * h;
-        return { x, y, v };
+        let t = jp2BestTimestamp(p);
+        if (!isNum(t)) t = startT + (total > 1 ? (i / (total - 1)) * spanT : 0);
+        return { v, t };
       })
       .filter(Boolean);
 
-    if (xy.length < 2) {
+    // Downsample to keep SVG light
+    const MAXP = 220;
+    const step = Math.max(1, Math.ceil(extracted.length / MAXP));
+    const ds = extracted.filter((_, i) => i % step === 0 || i === extracted.length - 1);
+
+    const t0 = (ds[0] && isNum(ds[0].t)) ? ds[0].t : startT;
+    const t1 = (ds[ds.length - 1] && isNum(ds[ds.length - 1].t)) ? ds[ds.length - 1].t : nowT;
+    const tSpan = Math.max(1, t1 - t0);
+
+    const xy = ds.map((p) => {
+      const x = ((p.t - t0) / tSpan) * w;
+      const y = h - ((p.v - y0) / (y1 - y0)) * h;
+      return { x, y, v: p.v, t: p.t };
+    });
+
+if (xy.length < 2) {
       graph.innerHTML = `<div class="msg">Historique indisponible</div>`;
       return;
     }
 
     const mode = String(c.graph_color_mode || "segments");
     const svgParts = [];
-    svgParts.push(`<line x1="0" y1="${h}" x2="${w}" y2="${h}" stroke="${cssColorMix("var(--divider-color)", 60)}" stroke-width="1" />`);
+    svgParts.push(`<line x1="0" y1="${h}" x2="${w}" y2="${h}" stroke="${cssColorMix("var(--divider-color)", 60, card)}" stroke-width="1" />`);
 
     const pathD = xy.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ");
 
@@ -2504,7 +2668,7 @@ if (p === "custom") {
     if (!this._hass || !entityId) return null;
     const key = `${entityId}|${hours}`;
     const now = Date.now();
-    const cached = this._historyCache.get(key);
+    const cached = this._historyGet(key);
     if (cached && now - cached.ts < 60000) return cached.points;
     if (this._historyInflight.has(key)) return await this._historyInflight.get(key);
 
@@ -2515,7 +2679,7 @@ if (p === "custom") {
         const res = await this._hass.callApi("GET", url);
         const arr = Array.isArray(res) ? res[0] : null;
         const points = Array.isArray(arr) ? arr : [];
-        this._historyCache.set(key, { ts: Date.now(), points });
+        this._historySet(key, { ts: Date.now(), points });
         return points;
       } catch (e) {
         return null;
@@ -2831,6 +2995,17 @@ if (p === "custom") {
           this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: r.eid }, bubbles: true, composed: true }));
         });
 
+        // A11y
+        tile.setAttribute("role", "button");
+        tile.tabIndex = 0;
+        tile.addEventListener("keydown", (e) => {
+          const k = e?.key;
+          if (k === "Enter" || k === " ") {
+            e.preventDefault();
+            this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: r.eid }, bubbles: true, composed: true }));
+          }
+        });
+
         return tile;
       }));
     } else {
@@ -2871,6 +3046,17 @@ if (p === "custom") {
 
         row.addEventListener("click", () => {
           this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: r.eid }, bubbles: true, composed: true }));
+        });
+
+        // A11y
+        row.setAttribute("role", "button");
+        row.tabIndex = 0;
+        row.addEventListener("keydown", (e) => {
+          const k = e?.key;
+          if (k === "Enter" || k === " ") {
+            e.preventDefault();
+            this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: r.eid }, bubbles: true, composed: true }));
+          }
         });
 
         return row;
