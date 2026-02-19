@@ -3,7 +3,7 @@
   File name must remain: jp2-air-quality.js
 
   Release notes — v2.1.5 (version actuelle)
-  - New: Éditeur visuel (onglet Général) : ajout des champs tap_action / hold_action / double_tap_action (Lovelace standard).
+  - New: Éditeur visuel (onglet Général) : section “Interactions” avec sélecteurs Lovelace (déroulant) pour tap_action / hold_action / double_tap_action (hui-action-editor).
 
   Release notes — v2.1.4
   - New: Support tap_action / hold_action / double_tap_action (Lovelace standard), incl. confirmation / navigate / url / call-service / fire-dom-event.
@@ -536,6 +536,22 @@ function jp2BindLovelaceActionHandler(targetEl, {
 
 
 
+
+
+function jp2TryParseJson(s) {
+  const str = String(s || "").trim();
+  if (!str) return null;
+  try {
+    return JSON.parse(str);
+  } catch (_) {
+    return null;
+  }
+}
+
+function jp2SafeStringifyJson(value) {
+  try { return JSON.stringify(value); }
+  catch (_) { try { return JSON.stringify(JSON.parse(String(value))); } catch (__) { return String(value); } }
+}
 
 function jp2StableStringify(value) {
   const seen = new WeakSet();
@@ -3446,6 +3462,10 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     for (const f of Array.from(this.shadowRoot?.querySelectorAll("ha-form") || [])) {
       try { f.hass = hass; } catch (_) {}
     }
+    // Propagation aux sélecteurs d’actions (Lovelace)
+    for (const a of Array.from(this.shadowRoot?.querySelectorAll("hui-action-editor") || [])) {
+      try { a.hass = hass; } catch (_) {}
+    }
   }
 
   setConfig(config) {
@@ -3465,11 +3485,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
       }
       merged.graph_color_mode = String(merged.graph_color_mode || "segments");
       merged.graph_position = String(merged.graph_position || "below_top");
-
-      // Lovelace actions (keep UI safe even if YAML has null/invalid values)
-      merged.tap_action = jp2NormalizeActionConfig(merged.tap_action, { action: "more-info" });
-      merged.hold_action = jp2NormalizeActionConfig(merged.hold_action, { action: "more-info" });
-      merged.double_tap_action = jp2NormalizeActionConfig(merged.double_tap_action, { action: "none" });
 
       // visualizer (full-screen history viewer)
       merged.visualizer_enabled = merged.visualizer_enabled !== false;
@@ -3745,6 +3760,10 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     for (const f of Array.from(this.shadowRoot.querySelectorAll("ha-form"))) {
       try { f.hass = this._hass; } catch (_) {}
     }
+    // Assure hass sur tous les sélecteurs d’actions (Lovelace)
+    for (const a of Array.from(this.shadowRoot.querySelectorAll("hui-action-editor"))) {
+      try { a.hass = this._hass; } catch (_) {}
+    }
 
     // Refresh previews
   }
@@ -3827,15 +3846,14 @@ class Jp2AirQualityCardEditor extends HTMLElement {
           ));
         }
 
-        // Actions Lovelace (tap/hold/double tap)
         root.appendChild(this._section(
           "Interactions",
-          "Actions Lovelace standard : tap, appui long, double-tap (navigate / url / service / event / etc.).",
-          this._actionsEditorBody(),
-          "card.actions"
+          "Actions Lovelace standard : clic, appui long, double-clic.",
+          this._interactionsEditor(),
+          "sensor.interactions"
         ));
 
-return root;
+        return root;
       }
       if (tabId === "display") {
         root.appendChild(this._section(
@@ -3904,12 +3922,11 @@ root.appendChild(this._section(
         "aqi.global_status"
       ));
 
-      // Actions Lovelace (tap/hold/double tap)
       root.appendChild(this._section(
         "Interactions",
-        "Actions Lovelace standard : tap, appui long, double-tap (navigate / url / service / event / etc.).",
-        this._actionsEditorBody(),
-        "card.actions"
+        "Actions Lovelace standard : clic, appui long, double-clic.",
+        this._interactionsEditor(),
+        "aqi.interactions"
       ));
 return root;
     }
@@ -4038,9 +4055,6 @@ return root;
       card_mode: "Type de carte",
       entity: "Entité",
       preset: "Preset",
-      tap_action: "Tap action (clic/tap)",
-      hold_action: "Hold action (appui long)",
-      double_tap_action: "Double-tap action",
 // custom preset
 "custom_preset.type": "Type de preset",
 "custom_preset.unit_fallback": "Unité (fallback)",
@@ -4181,9 +4195,6 @@ return root;
     const n = String(s?.name || "");
     const key = n.startsWith("bar.") ? n.slice(4) : n;
     const map = {
-      tap_action: "Action au clic/tap sur la carte (Lovelace standard).",
-      hold_action: "Action à l’appui long sur la carte (Lovelace standard).",
-      double_tap_action: "Action au double-tap sur la carte (Lovelace standard).",
 "custom_preset.type": "“Seuils” = plus haut = pire ; “Zone de confort” = bon au milieu.",
 "custom_preset.unit_fallback": "Utilisé si le capteur ne fournit pas d’unité.",
 "custom_preset.decimals": "Nombre de décimales affichées.",
@@ -4326,110 +4337,175 @@ return root;
   }
 
   // -------------------------
-  // Schemas (split forms)
+  // Interactions (Lovelace actions)
   // -------------------------
-
-  _supportsHaActionSelector() {
-    // HA Core provides a selector (ha-selector-action) in most recent versions.
-    // If not available (older HA), we fall back to a JSON editor.
-    try {
-      return !!customElements.get("ha-selector-action");
-    } catch (_) {
-      return false;
-    }
-  }
-
-  _schemaCardActions() {
-    // Lovelace standard actions
-    // https://www.home-assistant.io/dashboards/actions/
-    return [
-      { name: "tap_action", selector: { action: {} } },
-      { name: "hold_action", selector: { action: {} } },
-      { name: "double_tap_action", selector: { action: {} } },
-    ];
-  }
-
-  _actionsEditorBody() {
-    if (this._supportsHaActionSelector()) {
-      return this._makeForm(this._schemaCardActions(), this._config);
-    }
-
-    // Fallback: JSON textarea editor (still allows advanced configs)
+  _interactionsEditor() {
     const wrap = document.createElement("div");
     wrap.style.display = "grid";
-    wrap.style.gap = "10px";
+    wrap.style.gap = "12px";
 
-    const note = document.createElement("div");
-    note.className = "muted";
-    note.textContent = "Ton Home Assistant ne semble pas fournir le sélecteur d’actions (ha-selector-action). Édition JSON en fallback.";
-    wrap.appendChild(note);
+    const rows = [
+      { key: "tap_action", label: "Tap (clic)", fallback: { action: "more-info" } },
+      { key: "hold_action", label: "Hold (appui long)", fallback: { action: "more-info" } },
+      { key: "double_tap_action", label: "Double tap", fallback: { action: "none" } },
+    ];
 
-    const mk = (label, key) => {
-      const box = document.createElement("div");
-      box.style.display = "grid";
-      box.style.gap = "6px";
+    // On utilise le même composant que l’éditeur natif Lovelace
+    // (déroulant + champs contextuels). C’est plus compatible que ha-selector-action.
+    const hasHuiActionEditor = !!customElements.get("hui-action-editor");
 
-      const t = document.createElement("div");
-      t.style.fontWeight = "900";
-      t.textContent = label;
-      box.appendChild(t);
+    for (const r of rows) {
+      const current = jp2NormalizeActionConfig(this._config?.[r.key], r.fallback);
 
-      const ta = document.createElement("textarea");
-      ta.rows = 6;
-      ta.spellcheck = false;
-      ta.style.width = "100%";
-      ta.style.resize = "vertical";
-      ta.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
-      ta.style.fontSize = "12px";
-      ta.style.padding = "10px";
-      ta.style.borderRadius = "14px";
-      ta.style.border = "1px solid rgba(0,0,0,.18)";
-      ta.style.background = "rgba(0,0,0,.03)";
-      ta.value = JSON.stringify(this._config?.[key] ?? { action: "none" }, null, 2);
-      box.appendChild(ta);
+      if (hasHuiActionEditor) {
+        const ed = document.createElement("hui-action-editor");
+        try { ed.hass = this._hass; } catch (_) {}
+        try { ed.label = r.label; } catch (_) {}
+        // Selon les versions de HA, la prop s'appelle config ou value.
+        try { ed.config = current; } catch (_) {}
+        try { ed.value = current; } catch (_) {}
 
-      const err = document.createElement("div");
-      err.className = "muted";
-      err.style.color = "var(--error-color, #db3a34)";
-      err.hidden = true;
-      box.appendChild(err);
+        const handler = (ev) => this._onActionEditorChanged(r.key, ev, r.fallback);
+        ed.addEventListener("value-changed", handler);
+        ed.addEventListener("config-changed", handler);
 
-      const apply = () => {
-        const raw = String(ta.value || "").trim();
-        if (!raw) {
-          err.hidden = true;
-          const next = deepClone(this._config);
-          delete next[key];
-          this._config = next;
-          this._fireConfigChanged(this._config);
-          return;
-        }
-        try {
-          const parsed = JSON.parse(raw);
-          err.hidden = true;
-          const next = deepClone(this._config);
-          next[key] = parsed;
-          this._config = next;
-          this._fireConfigChanged(this._config);
-        } catch (e) {
-          err.hidden = false;
-          err.textContent = `JSON invalide : ${e && e.message ? e.message : e}`;
-        }
-      };
+        wrap.appendChild(ed);
+        continue;
+      }
 
-      ta.addEventListener("change", apply);
-      ta.addEventListener("blur", apply);
-
-      return box;
-    };
-
-    wrap.appendChild(mk("Tap action (clic/tap)", "tap_action"));
-    wrap.appendChild(mk("Hold action (appui long)", "hold_action"));
-    wrap.appendChild(mk("Double-tap action", "double_tap_action"));
+      // Fallback minimal (sans édition JSON) si hui-action-editor n’existe pas.
+      wrap.appendChild(this._basicActionDropdown(r.key, r.label, current, r.fallback));
+    }
 
     return wrap;
   }
 
+  _onActionEditorChanged(key, ev, fallback) {
+    if (!this._config) return;
+    try { ev.stopPropagation(); } catch (_) {}
+
+    const detail = ev?.detail ?? {};
+    const raw = (detail.value !== undefined) ? detail.value
+      : (detail.config !== undefined) ? detail.config
+      : (detail.action !== undefined) ? detail.action
+      : undefined;
+
+    const norm = jp2NormalizeActionConfig(raw, fallback);
+
+    const next = deepClone(this._config);
+    next[key] = norm;
+    this._config = next;
+    this._fireConfigChanged(this._config);
+  }
+
+  _basicActionDropdown(key, label, current, fallback) {
+    const row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gap = "8px";
+
+    const sel = document.createElement("ha-select");
+    sel.label = label;
+
+    const options = [
+      { label: "Aucune", value: "none" },
+      { label: "Plus d’infos", value: "more-info" },
+      { label: "Basculer (toggle)", value: "toggle" },
+      { label: "Naviguer", value: "navigate" },
+      { label: "Ouvrir une URL", value: "url" },
+      { label: "Appeler un service", value: "call-service" },
+      { label: "Fire DOM event", value: "fire-dom-event" },
+    ];
+
+    const curAction = String(current?.action || fallback?.action || "none");
+    sel.value = curAction;
+
+    for (const o of options) {
+      const it = document.createElement("mwc-list-item");
+      it.value = o.value;
+      it.textContent = o.label;
+      sel.appendChild(it);
+    }
+
+    const extra = document.createElement("div");
+    extra.style.display = "grid";
+    extra.style.gap = "8px";
+
+    const tfNav = document.createElement("ha-textfield");
+    tfNav.label = "Chemin de navigation";
+    tfNav.placeholder = "/lovelace/0";
+    tfNav.value = String(current?.navigation_path || "");
+
+    const tfUrl = document.createElement("ha-textfield");
+    tfUrl.label = "URL";
+    tfUrl.placeholder = "https://…";
+    tfUrl.value = String(current?.url_path || "");
+
+    const tfSvc = document.createElement("ha-textfield");
+    tfSvc.label = "Service";
+    tfSvc.placeholder = "light.toggle";
+    tfSvc.value = String(current?.service || "");
+
+    const tfSvcData = document.createElement("ha-textfield");
+    tfSvcData.label = "Service data (JSON)";
+    tfSvcData.placeholder = "{\"entity_id\": \"light.salon\"}";
+    tfSvcData.value = current?.service_data ? jp2SafeStringifyJson(current.service_data) : "";
+
+    const tfEvent = document.createElement("ha-textfield");
+    tfEvent.label = "Event data (JSON)";
+    tfEvent.placeholder = "{...}";
+    tfEvent.value = current?.event_data ? jp2SafeStringifyJson(current.event_data) : "";
+
+    const refreshExtra = (action) => {
+      extra.innerHTML = "";
+      const a = String(action || "none");
+      if (a === "navigate") extra.appendChild(tfNav);
+      else if (a === "url") extra.appendChild(tfUrl);
+      else if (a === "call-service") { extra.appendChild(tfSvc); extra.appendChild(tfSvcData); }
+      else if (a === "fire-dom-event") extra.appendChild(tfEvent);
+    };
+
+    const emit = () => {
+      const a = String(sel.value || "none");
+      let cfg = { action: a };
+      if (a === "navigate") cfg.navigation_path = String(tfNav.value || "");
+      if (a === "url") cfg.url_path = String(tfUrl.value || "");
+      if (a === "call-service") {
+        cfg.service = String(tfSvc.value || "");
+        const parsed = jp2TryParseJson(String(tfSvcData.value || ""));
+        if (parsed !== null) cfg.service_data = parsed;
+      }
+      if (a === "fire-dom-event") {
+        const parsed = jp2TryParseJson(String(tfEvent.value || ""));
+        if (parsed !== null) cfg.event_data = parsed;
+      }
+      cfg = jp2NormalizeActionConfig(cfg, fallback);
+
+      const next = deepClone(this._config);
+      next[key] = cfg;
+      this._config = next;
+      this._fireConfigChanged(this._config);
+    };
+
+    sel.addEventListener("selected", () => { refreshExtra(sel.value); emit(); });
+    sel.addEventListener("value-changed", () => { refreshExtra(sel.value); emit(); });
+
+    tfNav.addEventListener("change", emit);
+    tfUrl.addEventListener("change", emit);
+    tfSvc.addEventListener("change", emit);
+    tfSvcData.addEventListener("change", emit);
+    tfEvent.addEventListener("change", emit);
+
+    refreshExtra(curAction);
+
+    row.appendChild(sel);
+    row.appendChild(extra);
+    return row;
+  }
+
+
+  // -------------------------
+  // Schemas (split forms)
+  // -------------------------
   _schemaSensorGeneral() {
     return [
       { name: "card_mode", selector: { select: { options: [
