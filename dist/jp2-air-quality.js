@@ -3,14 +3,11 @@
   File name must remain: jp2-air-quality.js
 
   Release notes — v2.1.5 (version actuelle)
-  - Fix: Éditeur visuel → Interactions : affichage immédiat des champs (URL / Naviguer / Service) dès le choix dans le déroulant (plus besoin d’enregistrer).
-  - Change: suppression de l’action “Permuter” (toggle) de la liste.
-  - Fix: l’événement config-changed inclut toujours le champ type (corrige “Erreur de configuration — Aucun type fourni”).
-  - Fix: exécution des actions Lovelace “perform-action” (service) supportée.
+  - UI: Graphe (mini + visualiseur) rendu plus proche du graphe natif Home Assistant (courbe plus fluide, aire remplie, grille subtile) en conservant les options existantes.
+  - UI: Mode AQI — plus de texte "(capteurs masqués)" quand l’affichage des capteurs est désactivé.
 
   Release notes — v2.1.4
   - New: Support tap_action / hold_action / double_tap_action (Lovelace standard), incl. confirmation / navigate / url / call-service / fire-dom-event.
-
 
   Release notes — v2.1.3
   - Fix: fallback color-mix Safari/vars CSS (résolution via computedStyle).
@@ -41,10 +38,10 @@
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph, full-screen visualizer, and a fluid visual editor (v2).";
-const CARD_VERSION = "2.1.5c";
+const CARD_VERSION = "2.1.5";
 
 
-const CARD_BUILD_DATE = "2026-02-21";
+const CARD_BUILD_DATE = "2026-02-18";
 // -------------------------
 // Defaults / presets
 // -------------------------
@@ -162,6 +159,41 @@ function jp2BestTimestamp(obj) {
     if (!Number.isNaN(t)) return t;
   }
   return null;
+}
+
+
+function jp2SvgSmoothPath(pts, { tension = 1, clampYMin = null, clampYMax = null } = {}) {
+  // Catmull‑Rom → cubic Bézier (Chart.js-like feel). Returns a path string (no fill).
+  if (!Array.isArray(pts) || pts.length < 2) return "";
+  const n = pts.length;
+  const k = Number(tension);
+  const t = Number.isFinite(k) ? k : 1;
+
+  const clampY = (y) => {
+    const lo = (clampYMin === null || clampYMin === undefined) ? -Infinity : Number(clampYMin);
+    const hi = (clampYMax === null || clampYMax === undefined) ? Infinity : Number(clampYMax);
+    return Math.max(lo, Math.min(hi, y));
+  };
+
+  const fmt = (v) => Number(v).toFixed(2);
+
+  let d = `M ${fmt(pts[0].x)} ${fmt(clampY(pts[0].y))}`;
+
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+
+    const cp1x = p1.x + ((p2.x - p0.x) * t) / 6;
+    const cp1y = clampY(p1.y + ((p2.y - p0.y) * t) / 6);
+    const cp2x = p2.x - ((p3.x - p1.x) * t) / 6;
+    const cp2y = clampY(p2.y - ((p3.y - p1.y) * t) / 6);
+
+    d += ` C ${fmt(cp1x)} ${fmt(cp1y)} ${fmt(cp2x)} ${fmt(cp2y)} ${fmt(p2.x)} ${fmt(clampY(p2.y))}`;
+  }
+
+  return d;
 }
 
 
@@ -2185,30 +2217,6 @@ if (p === "custom") {
       return;
     }
 
-    if (a === "perform-action") {
-      if (!hass) return;
-      const svc = String(actionCfg?.perform_action || actionCfg?.service || "");
-      const [domain, service] = svc.includes(".") ? svc.split(".", 2) : [null, null];
-      if (!domain || !service) return;
-
-      const data = (actionCfg?.data && typeof actionCfg.data === "object") ? actionCfg.data
-        : ((actionCfg?.service_data && typeof actionCfg.service_data === "object") ? actionCfg.service_data : {});
-      const target = (actionCfg?.target && typeof actionCfg.target === "object") ? actionCfg.target : null;
-
-      try {
-        // HA récent: hass.callService(domain, service, data, target)
-        if (target && Object.keys(target).length) {
-          try { hass.callService(domain, service, data, target); return; } catch (_) {}
-          // Fallback: fusion target->data (anciennes signatures)
-          hass.callService(domain, service, { ...data, ...target });
-          return;
-        }
-        hass.callService(domain, service, data);
-      } catch (_) {}
-      return;
-    }
-
-
     if (a === "call-service") {
       if (!hass) return;
       const svc = String(actionCfg?.service || "");
@@ -2737,15 +2745,33 @@ if (p === "custom") {
 
     const mode = String(c.graph_color_mode || "segments");
 
+    // HA-like grid + smooth area/line (keeps existing color modes)
+    const gridColor = cssColorMix("var(--divider-color)", 78);
+    const axisColor = cssColorMix("var(--divider-color)", 62);
+
+    const straightLineD = points.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ");
+    const smoothLineD = jp2SvgSmoothPath(points, { tension: 1, clampYMin: 0, clampYMax: H }) || straightLineD;
+    const fillD = `${smoothLineD} L ${W} ${H} L 0 ${H} Z`;
+
+    // Build series paths
     const segPaths = [];
+    const strokeAttrs = `stroke-width="3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"`;
     const buildSeg = (a, b, col) => {
       const d = `M ${a.x.toFixed(2)} ${a.y.toFixed(2)} L ${b.x.toFixed(2)} ${b.y.toFixed(2)}`;
-      segPaths.push(`<path d="${d}" fill="none" stroke="${col}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />`);
+      segPaths.push(`<path d="${d}" fill="none" stroke="${col}" ${strokeAttrs} />`);
     };
 
     if (mode === "single") {
-      const d = points.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ");
-      segPaths.push(`<path d="${d}" fill="none" stroke="${baseColor}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />`);
+      segPaths.push(`<path d="${smoothLineD}" fill="none" stroke="${baseColor}" ${strokeAttrs} />`);
+    } else if (mode === "peaks") {
+      segPaths.push(`<path d="${smoothLineD}" fill="none" stroke="${baseColor}" ${strokeAttrs} />`);
+      for (const p of points) {
+        const st = this._statusFor(preset, p.v);
+        if (st.level === "warn" || st.level === "bad") {
+          const col = st.level === "warn" ? warnColor : badColor;
+          segPaths.push(`<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="5" fill="${col}" opacity="0.95" />`);
+        }
+      }
     } else {
       for (let i = 0; i < points.length - 1; i++) {
         const a = points[i], b = points[i + 1];
@@ -2753,34 +2779,41 @@ if (p === "custom") {
         const col = st.level === "warn" ? warnColor : st.level === "bad" ? badColor : baseColor;
         buildSeg(a, b, col);
       }
-      if (mode === "peaks") {
-        for (const p of points) {
-          const st = this._statusFor(preset, p.v);
-          if (st.level === "warn" || st.level === "bad") {
-            const col = st.level === "warn" ? warnColor : badColor;
-            segPaths.push(`<circle cx="${p.x.toFixed(2)}" cy="${p.y.toFixed(2)}" r="4" fill="${col}" opacity="0.95" />`);
-          }
-        }
-      }
     }
+
+    // Grid
+    const gridLines = [];
+    for (const frac of [0.25, 0.5, 0.75]) {
+      const yy = (H * frac);
+      gridLines.push(`<line x1="0" y1="${yy.toFixed(2)}" x2="${W}" y2="${yy.toFixed(2)}" stroke="${gridColor}" stroke-width="1" vector-effect="non-scaling-stroke" />`);
+    }
+    for (const frac of [1/6, 2/6, 3/6, 4/6, 5/6]) {
+      const xx = (W * frac);
+      gridLines.push(`<line x1="${xx.toFixed(2)}" y1="0" x2="${xx.toFixed(2)}" y2="${H}" stroke="${gridColor}" stroke-width="1" vector-effect="non-scaling-stroke" />`);
+    }
+    gridLines.push(`<line x1="0" y1="${H}" x2="${W}" y2="${H}" stroke="${axisColor}" stroke-width="1" vector-effect="non-scaling-stroke" />`);
 
     const svg = `
       <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Historique détaillé">
         <defs>
           <linearGradient id="jp2VizFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="${baseColor}" stop-opacity="0.22" />
+            <stop offset="0%" stop-color="${baseColor}" stop-opacity="0.20" />
             <stop offset="100%" stop-color="${baseColor}" stop-opacity="0" />
           </linearGradient>
+          <clipPath id="jp2VizClip">
+            <rect x="0" y="0" width="${W}" height="${H}" rx="14" ry="14" />
+          </clipPath>
         </defs>
 
-        ${thresholdLines.join("")}
+        <g clip-path="url(#jp2VizClip)">
+          ${gridLines.join("")}
+          ${thresholdLines.join("")}
+          <path d="${fillD}" fill="url(#jp2VizFill)" opacity="1" />
+          ${segPaths.join("")}
+        </g>
 
-        <path d="${points.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ")} L ${W} ${H} L 0 ${H} Z"
-              fill="url(#jp2VizFill)" opacity="1" />
-        ${segPaths.join("")}
-
-        <line id="vizCursorLine" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(0,0,0,.25)" stroke-width="1" style="display:none" />
-        <circle id="vizCursorDot" cx="0" cy="0" r="5" fill="${baseColor}" stroke="rgba(255,255,255,.8)" stroke-width="2" style="display:none" />
+        <line id="vizCursorLine" x1="0" y1="0" x2="0" y2="${H}" stroke="rgba(0,0,0,.25)" stroke-width="1" vector-effect="non-scaling-stroke" style="display:none" />
+        <circle id="vizCursorDot" cx="0" cy="0" r="5" fill="${baseColor}" stroke="rgba(255,255,255,.8)" stroke-width="2" vector-effect="non-scaling-stroke" style="display:none" />
       </svg>
     `;
 
@@ -2992,21 +3025,41 @@ if (p === "custom") {
       return { x, y, v: p.v, t: p.t };
     });
 
-if (xy.length < 2) {
+    if (xy.length < 2) {
       graph.innerHTML = `<div class="msg">Historique indisponible</div>`;
       return;
     }
 
     const mode = String(c.graph_color_mode || "segments");
-    const svgParts = [];
-    svgParts.push(`<line x1="0" y1="${h}" x2="${w}" y2="${h}" stroke="${cssColorMix("var(--divider-color)", 60, card)}" stroke-width="1" />`);
 
-    const pathD = xy.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ");
+    // HA-like styling: subtle grid + filled area + smoother curve (while keeping existing options)
+    const gridColor = cssColorMix("var(--divider-color)", 78, card);
+    const axisColor = cssColorMix("var(--divider-color)", 62, card);
+
+    const straightD = xy.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ");
+    const smoothD = jp2SvgSmoothPath(xy, { tension: 1, clampYMin: 0, clampYMax: h }) || straightD;
+
+    const r = Math.min(12, h / 2);
+    const fillD = `${smoothD} L ${w} ${h} L 0 ${h} Z`;
+
+    const svgParts = [];
+
+    // Grid (horizontal)
+    for (const frac of [0.25, 0.5, 0.75]) {
+      const yy = (h * frac);
+      svgParts.push(`<line x1="0" y1="${yy.toFixed(2)}" x2="${w}" y2="${yy.toFixed(2)}" stroke="${gridColor}" stroke-width="1" vector-effect="non-scaling-stroke" />`);
+    }
+
+    // Filled area (always, to match HA)
+    svgParts.push(`<path d="${fillD}" fill="url(#jp2MiniFill)" opacity="1" />`);
+
+    // Series stroke
+    const strokeAttrs = `stroke-width="${strokeW}" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"`;
 
     if (mode === "single") {
-      svgParts.push(`<path d="${pathD}" fill="none" stroke="${baseColor}" stroke-width="${strokeW}" stroke-linecap="round" stroke-linejoin="round" />`);
+      svgParts.push(`<path d="${smoothD}" fill="none" stroke="${baseColor}" ${strokeAttrs} />`);
     } else if (mode === "peaks") {
-      svgParts.push(`<path d="${pathD}" fill="none" stroke="${baseColor}" stroke-width="${strokeW}" stroke-linecap="round" stroke-linejoin="round" />`);
+      svgParts.push(`<path d="${smoothD}" fill="none" stroke="${baseColor}" ${strokeAttrs} />`);
       for (const p of xy) {
         const st = this._statusFor(preset, p.v);
         if (st.level === "warn" || st.level === "bad") {
@@ -3020,13 +3073,27 @@ if (xy.length < 2) {
         const st = this._statusFor(preset, (a.v + b.v) / 2);
         const col = st.level === "warn" ? warnColor : st.level === "bad" ? badColor : baseColor;
         const d = `M ${a.x.toFixed(2)} ${a.y.toFixed(2)} L ${b.x.toFixed(2)} ${b.y.toFixed(2)}`;
-        svgParts.push(`<path d="${d}" fill="none" stroke="${col}" stroke-width="${strokeW}" stroke-linecap="round" stroke-linejoin="round" />`);
+        svgParts.push(`<path d="${d}" fill="none" stroke="${col}" ${strokeAttrs} />`);
       }
     }
 
+    // Bottom axis line
+    svgParts.push(`<line x1="0" y1="${h}" x2="${w}" y2="${h}" stroke="${axisColor}" stroke-width="1" vector-effect="non-scaling-stroke" />`);
+
     const svg = `
       <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-label="Historique">
-        ${svgParts.join("")}
+        <defs>
+          <linearGradient id="jp2MiniFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${baseColor}" stop-opacity="0.18" />
+            <stop offset="100%" stop-color="${baseColor}" stop-opacity="0" />
+          </linearGradient>
+          <clipPath id="jp2MiniClip">
+            <rect x="0" y="0" width="${w}" height="${h}" rx="${r}" ry="${r}" />
+          </clipPath>
+        </defs>
+        <g clip-path="url(#jp2MiniClip)">
+          ${svgParts.join("")}
+        </g>
       </svg>
     `;
 
@@ -3313,7 +3380,7 @@ if (xy.length < 2) {
     let body = null;
 
     if (c.aqi_show_sensors === false) {
-      body = el("div", { style: { marginTop: "6px", opacity: ".65", fontSize: "12px" } }, ["(capteurs masqués)"]);
+      body = null;
     } else if (layout === "horizontal") {
       const cols = clamp(Number(c.aqi_tiles_per_row || 3), 1, 6);
       aqi.style.setProperty("--jp2-aqi-cols", String(cols));
@@ -3474,10 +3541,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     for (const f of Array.from(this.shadowRoot?.querySelectorAll("ha-form") || [])) {
       try { f.hass = hass; } catch (_) {}
     }
-    // Propagation aux éditeurs d'actions
-    for (const a of Array.from(this.shadowRoot?.querySelectorAll("hui-action-editor") || [])) {
-      try { a.hass = hass; } catch (_) {}
-    }
   }
 
   setConfig(config) {
@@ -3489,10 +3552,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         ...raw,
         bar: { ...(stub.bar || {}), ...deepClone((raw && raw.bar) || {}) },
       };
-
-      // Assure le champ type (HA l'exige pour éviter “Erreur de configuration — Aucun type fourni”)
-      merged.type = (raw && raw.type) ? raw.type : (config && config.type ? config.type : (merged.type || `custom:${CARD_TYPE}`));
-
 
       merged.card_mode = String(merged.card_mode || "sensor");
       merged.preset = String(merged.preset || "radon");
@@ -3858,22 +3917,6 @@ class Jp2AirQualityCardEditor extends HTMLElement {
           ));
         }
 
-
-        root.appendChild(this._section(
-          "Interactions",
-          "Actions Lovelace standard : clic, appui long, double-clic.",
-          this._actionsEditorBody(),
-          "sensor.interactions"
-        ));
-
-
-      root.appendChild(this._section(
-        "Interactions",
-        "Actions Lovelace standard : clic, appui long, double-clic.",
-        this._actionsEditorBody(),
-        "aqi.interactions"
-      ));
-
 return root;
       }
       if (tabId === "display") {
@@ -4059,73 +4102,6 @@ return root;
 
     form.addEventListener("value-changed", this._onFormValueChanged);
     return form;
-  }
-
-
-  _supportedUiActionsForCard() {
-    // Même UX que les autres modules HA (hui-action-editor) mais sans “Permuter” (toggle).
-    // On garde uniquement les actions que la carte sait exécuter.
-    return ["more-info", "navigate", "url", "perform-action", "none"];
-  }
-
-  _actionsEditorBody() {
-    const wrap = document.createElement("div");
-    wrap.style.display = "grid";
-    wrap.style.gap = "12px";
-
-    const mk = (label, key, defaultAction) => {
-      const ed = document.createElement("hui-action-editor");
-      try { ed.hass = this._hass; } catch (_) {}
-      try { ed.label = label; } catch (_) {}
-      try { ed.actions = this._supportedUiActionsForCard(); } catch (_) {}
-      if (defaultAction) { try { ed.defaultAction = defaultAction; } catch (_) {} }
-
-      let cfg = this._config ? this._config[key] : undefined;
-      // Si l’action correspond strictement au défaut et n’a pas d’options, on affiche “default”.
-      try {
-        if (cfg && typeof cfg === "object" && !Array.isArray(cfg) && defaultAction) {
-          const a = String(cfg.action || "");
-          const keys = Object.keys(cfg);
-          if (a === defaultAction && keys.length === 1) cfg = undefined;
-        }
-      } catch (_) {}
-      try { ed.config = cfg; } catch (_) {}
-
-      ed.addEventListener("value-changed", (ev) => this._onCardActionChanged(key, ed, ev));
-      return ed;
-    };
-
-    wrap.appendChild(mk("Tap action (clic/tap)", "tap_action", "more-info"));
-    wrap.appendChild(mk("Hold action (appui long)", "hold_action", "more-info"));
-    wrap.appendChild(mk("Double-tap action", "double_tap_action", "none"));
-
-    return wrap;
-  }
-
-  _onCardActionChanged(key, editorEl, ev) {
-    try { ev?.stopPropagation?.(); } catch (_) {}
-
-    const value = ev?.detail?.value;
-
-    const next = deepClone(this._config || {});
-    if (!next.type) next.type = (this._config && this._config.type) ? this._config.type : `custom:${CARD_TYPE}`;
-
-    if (value === undefined) {
-      delete next[key];
-    } else if (typeof value === "string") {
-      next[key] = { action: value };
-    } else if (value && typeof value === "object" && !Array.isArray(value)) {
-      next[key] = value;
-    } else {
-      delete next[key];
-    }
-
-    this._config = next;
-
-    // IMPORTANT: met à jour l’éditeur immédiatement pour afficher les champs sans “enregistrer”
-    try { editorEl.config = next[key]; } catch (_) {}
-
-    this._fireConfigChanged(this._config);
   }
 
     _computeLabel(s) {
@@ -5040,9 +5016,6 @@ const body = document.createElement("div");
 
   _fireConfigChanged(cfg) {
     const cleaned = deepClone(cfg);
-
-    // Fix: HA exige un champ type dans la config d’une carte
-    if (!cleaned.type) cleaned.type = (this._config && this._config.type) ? this._config.type : `custom:${CARD_TYPE}`;
 
     // Fix: supprime les clés racines du type "bar.width" si présentes
     jp2NormalizeDottedRootKeys(cleaned, ["bar"]);
