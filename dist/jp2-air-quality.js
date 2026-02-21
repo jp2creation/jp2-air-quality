@@ -2,7 +2,25 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.1.0 (version actuelle)
+  Release notes — v2.1.5 (version actuelle)
+  - Fix: Éditeur visuel → Interactions : affichage immédiat des champs (URL / Naviguer / Service) dès le choix dans le déroulant (plus besoin d’enregistrer).
+  - Change: suppression de l’action “Permuter” (toggle) de la liste.
+  - Fix: l’événement config-changed inclut toujours le champ type (corrige “Erreur de configuration — Aucun type fourni”).
+  - Fix: exécution des actions Lovelace “perform-action” (service) supportée.
+
+  Release notes — v2.1.4
+  - New: Support tap_action / hold_action / double_tap_action (Lovelace standard), incl. confirmation / navigate / url / call-service / fire-dom-event.
+
+
+  Release notes — v2.1.3
+  - Fix: fallback color-mix Safari/vars CSS (résolution via computedStyle).
+  - Fix: refresh key inclut unit_of_measurement + last_updated.
+  - Fix: mini-graphe interne basé sur timestamps + downsample (perf).
+
+  - Perf: cache historique limité (LRU) pour éviter la croissance infinie.
+  - A11y: header + graphe + listes AQI activables au clavier (Tab/Enter/Espace).
+  - Theme: knob outline utilise la couleur de fond réelle de la carte (moins agressif en thème sombre).
+
   - Presets : ajout d’une option “Personnalisé (capteur libre)” pour intégrer un capteur sans preset pré-enregistré.
   - Éditeur : l’accordéon “Preset personnalisé” apparaît immédiatement quand ce preset est sélectionné (sans devoir enregistrer).
 
@@ -23,10 +41,10 @@
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph, full-screen visualizer, and a fluid visual editor (v2).";
-const CARD_VERSION = "2.1.0";
+const CARD_VERSION = "2.1.5";
 
 
-const CARD_BUILD_DATE = "2026-02-15";
+const CARD_BUILD_DATE = "2026-02-21";
 // -------------------------
 // Defaults / presets
 // -------------------------
@@ -193,14 +211,88 @@ const _JP2_UA = (typeof navigator !== "undefined" && navigator.userAgent) ? navi
 const _JP2_IS_SAFARI = /Safari/i.test(_JP2_UA) && !/(Chrome|Chromium|Edg|OPR)/i.test(_JP2_UA);
 const _JP2_SUPPORTS_COLOR_MIX = !_JP2_IS_SAFARI && (typeof CSS !== "undefined") && CSS.supports && CSS.supports("color", "color-mix(in srgb, #000 10%, transparent)");
 
-function cssColorMix(color, pct) {
+let _JP2_COLOR_PROBE = null;
+const _JP2_COLOR_CACHE = new WeakMap();
+
+/**
+ * Resolve any CSS color (including var(--*), named colors, hsl(), etc.) to rgba(),
+ * and apply a multiplicative alpha.
+ * scopeEl allows correct resolution when card-mod overrides vars at the card level.
+ */
+function jp2ResolveCssColorToRgba(color, alpha = 1, scopeEl) {
+  try {
+    const aMul = Math.max(0, Math.min(1, Number(alpha)));
+    const c = String(color || "").trim();
+    if (!c) return "rgba(0,0,0,0)";
+
+    // Fast path: already rgb/rgba
+    const direct = c.match(/rgba?\(([^)]+)\)/i);
+    if (direct) {
+      const parts = direct[1].split(",").map((s) => s.trim());
+      const r = Number(parts[0]);
+      const g = Number(parts[1]);
+      const b = Number(parts[2]);
+      let a0 = parts.length > 3 ? Number(parts[3]) : 1;
+      if (!isFinite(a0)) a0 = 1;
+      const a = Math.max(0, Math.min(1, a0 * aMul));
+      return `rgba(${r},${g},${b},${a.toFixed(3)})`;
+    }
+
+    const scope = (scopeEl && scopeEl.appendChild) ? scopeEl : document.documentElement;
+    let perScope = _JP2_COLOR_CACHE.get(scope);
+    if (!perScope) {
+      perScope = new Map();
+      _JP2_COLOR_CACHE.set(scope, perScope);
+    }
+
+    let computed = perScope.get(c);
+    if (!computed) {
+      if (!_JP2_COLOR_PROBE) {
+        _JP2_COLOR_PROBE = document.createElement("span");
+        _JP2_COLOR_PROBE.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none;";
+      }
+
+      _JP2_COLOR_PROBE.style.color = c;
+
+      // Ensure probe is attached under the right scope for CSS variable resolution
+      if (!_JP2_COLOR_PROBE.isConnected || _JP2_COLOR_PROBE.parentNode !== scope) {
+        try { _JP2_COLOR_PROBE.remove(); } catch (_) {}
+        try { scope.appendChild(_JP2_COLOR_PROBE); } catch (_) { document.documentElement.appendChild(_JP2_COLOR_PROBE); }
+      }
+
+      computed = getComputedStyle(_JP2_COLOR_PROBE).color || "rgba(0,0,0,0)";
+      perScope.set(c, computed);
+
+      // Avoid unbounded growth (rare)
+      if (perScope.size > 80) perScope.clear();
+    }
+
+    const m = computed.match(/rgba?\(([^)]+)\)/i);
+    if (!m) return "rgba(0,0,0,0)";
+    const parts = m[1].split(",").map((s) => s.trim());
+    const r = Number(parts[0]);
+    const g = Number(parts[1]);
+    const b = Number(parts[2]);
+    let a0 = parts.length > 3 ? Number(parts[3]) : 1;
+    if (!isFinite(a0)) a0 = 1;
+
+    const a = Math.max(0, Math.min(1, a0 * aMul));
+    return `rgba(${r},${g},${b},${a.toFixed(3)})`;
+  } catch (_) {
+    return "rgba(0,0,0,0)";
+  }
+}
+
+function cssColorMix(color, pct, scopeEl) {
   const p = clamp(pct, 0, 100);
   if (_JP2_SUPPORTS_COLOR_MIX) return `color-mix(in srgb, ${color} ${p}%, transparent)`;
-  // Fallback léger (évite certains gels WebKit). Si la couleur est un hex, on génère un rgba.
+
+  // Fast hex fallback (perf-friendly)
   const c = String(color || "").trim();
   const m3 = /^#([0-9a-fA-F]{3})$/.exec(c);
   const m6 = /^#([0-9a-fA-F]{6})$/.exec(c);
-  let r=null,g=null,b=null;
+  let r = null, g = null, b = null;
+
   if (m3) {
     const h = m3[1];
     r = parseInt(h[0] + h[0], 16);
@@ -208,15 +300,18 @@ function cssColorMix(color, pct) {
     b = parseInt(h[2] + h[2], 16);
   } else if (m6) {
     const h = m6[1];
-    r = parseInt(h.slice(0,2), 16);
-    g = parseInt(h.slice(2,4), 16);
-    b = parseInt(h.slice(4,6), 16);
+    r = parseInt(h.slice(0, 2), 16);
+    g = parseInt(h.slice(2, 4), 16);
+    b = parseInt(h.slice(4, 6), 16);
   }
+
   if (r !== null) {
     const a = Math.max(0, Math.min(1, p / 100));
     return `rgba(${r},${g},${b},${a.toFixed(3)})`;
   }
-  return "transparent";
+
+  // Universal fallback (vars/named/hsl)
+  return jp2ResolveCssColorToRgba(c, p / 100, scopeEl);
 }
 
 
@@ -252,6 +347,196 @@ const JP2_AQI_GLOBAL_SVG = (() => {
 function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj || {}));
 }
+
+// -------------------------
+// Lovelace actions (tap/hold/double_tap)
+// -------------------------
+function jp2FireEvent(node, type, detail = {}, options = {}) {
+  try {
+    node?.dispatchEvent(new CustomEvent(type, {
+      detail,
+      bubbles: options.bubbles !== false,
+      composed: options.composed !== false,
+      cancelable: options.cancelable === true,
+    }));
+  } catch (_) {}
+}
+
+function jp2NormalizeActionConfig(actionCfg, fallback) {
+  // Accept "more-info" shorthand or full object
+  if (actionCfg === undefined || actionCfg === null) return deepClone(fallback || { action: "none" });
+  if (typeof actionCfg === "string") return { action: actionCfg };
+  if (typeof actionCfg !== "object" || Array.isArray(actionCfg)) return deepClone(fallback || { action: "none" });
+  const out = { ...actionCfg };
+  if (!out.action && typeof fallback === "object" && fallback?.action) out.action = fallback.action;
+  out.action = String(out.action || "none");
+  return out;
+}
+
+function jp2ActionHasAction(actionCfg) {
+  const a = actionCfg && typeof actionCfg === "object" ? String(actionCfg.action || "none") : "none";
+  return a && a !== "none";
+}
+
+function jp2EventPathHasNoCardAction(ev) {
+  try {
+    const path = ev?.composedPath?.() || [];
+    for (const n of path) {
+      if (!n) continue;
+      if (n?.dataset && (n.dataset.jp2NoCardAction === "1" || n.dataset.jp2NoCardAction === "true")) return true;
+      if (typeof n?.getAttribute === "function" && (n.getAttribute("data-jp2-no-card-action") === "1")) return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+// Basic gesture handler: supports touch & mouse (pointer events) with hold + double-tap.
+function jp2BindLovelaceActionHandler(targetEl, {
+  onAction,
+  hasDouble = () => false,
+  hasHold = () => false,
+  shouldIgnore = () => false,
+  holdTime = 500,
+  doubleTapTime = 250,
+  moveThreshold = 10,
+} = {}) {
+  if (!targetEl) return;
+
+  let pointerDown = false;
+  let startX = 0;
+  let startY = 0;
+  let holdTimer = null;
+  let holdFired = false;
+
+  let pendingTapTimer = null;
+  let pendingTapEvent = null;
+
+  const clearHold = () => {
+    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+  };
+  const clearPendingTap = () => {
+    if (pendingTapTimer) { clearTimeout(pendingTapTimer); pendingTapTimer = null; }
+    pendingTapEvent = null;
+  };
+
+  const dist = (x1, y1, x2, y2) => Math.hypot((x1 - x2), (y1 - y2));
+
+  const onPointerDown = (ev) => {
+    try {
+      if (shouldIgnore(ev)) return;
+      if (ev?.button !== undefined && ev.button !== 0) return; // left click only
+      pointerDown = true;
+      holdFired = false;
+      startX = ev?.clientX ?? 0;
+      startY = ev?.clientY ?? 0;
+
+      clearHold();
+      if (hasHold()) {
+        holdTimer = setTimeout(() => {
+          if (!pointerDown) return;
+          holdFired = true;
+          clearPendingTap();
+          try { onAction?.("hold", ev); } catch (_) {}
+        }, holdTime);
+      }
+    } catch (_) {}
+  };
+
+  const onPointerMove = (ev) => {
+    try {
+      if (!pointerDown) return;
+      const x = ev?.clientX ?? 0;
+      const y = ev?.clientY ?? 0;
+      if (dist(startX, startY, x, y) > moveThreshold) {
+        clearHold();
+      }
+    } catch (_) {}
+  };
+
+  const onPointerUp = (ev) => {
+    try {
+      if (!pointerDown) return;
+      pointerDown = false;
+      clearHold();
+
+      if (holdFired) {
+        // prevent the following click from doing something else
+        try { ev?.preventDefault?.(); } catch (_) {}
+        return;
+      }
+
+      if (shouldIgnore(ev)) return;
+
+      const doubleEnabled = !!hasDouble();
+      if (!doubleEnabled) {
+        try { onAction?.("tap", ev); } catch (_) {}
+        return;
+      }
+
+      // Double tap enabled: wait a bit before firing single tap
+      if (pendingTapTimer) {
+        // second tap
+        clearPendingTap();
+        try { onAction?.("double_tap", ev); } catch (_) {}
+        return;
+      }
+
+      pendingTapEvent = ev;
+      pendingTapTimer = setTimeout(() => {
+        const e = pendingTapEvent;
+        clearPendingTap();
+        try { onAction?.("tap", e); } catch (_) {}
+      }, doubleTapTime);
+    } catch (_) {}
+  };
+
+  const onPointerCancel = () => {
+    pointerDown = false;
+    clearHold();
+  };
+
+  const onContextMenu = (ev) => {
+    try {
+      if (shouldIgnore(ev)) return;
+      if (!hasHold()) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      clearHold();
+      clearPendingTap();
+      try { onAction?.("hold", ev); } catch (_) {}
+    } catch (_) {}
+  };
+
+  const onKeyDown = (ev) => {
+    try {
+      if (shouldIgnore(ev)) return;
+      const k = ev?.key;
+      if (k === "Enter" || k === " ") {
+        ev.preventDefault();
+        try { onAction?.("tap", ev); } catch (_) {}
+      }
+    } catch (_) {}
+  };
+
+  targetEl.addEventListener("pointerdown", onPointerDown);
+  targetEl.addEventListener("pointermove", onPointerMove);
+  targetEl.addEventListener("pointerup", onPointerUp);
+  targetEl.addEventListener("pointercancel", onPointerCancel);
+  targetEl.addEventListener("contextmenu", onContextMenu);
+  targetEl.addEventListener("keydown", onKeyDown);
+
+  // Return unbind fn
+  return () => {
+    try { targetEl.removeEventListener("pointerdown", onPointerDown); } catch (_) {}
+    try { targetEl.removeEventListener("pointermove", onPointerMove); } catch (_) {}
+    try { targetEl.removeEventListener("pointerup", onPointerUp); } catch (_) {}
+    try { targetEl.removeEventListener("pointercancel", onPointerCancel); } catch (_) {}
+    try { targetEl.removeEventListener("contextmenu", onContextMenu); } catch (_) {}
+    try { targetEl.removeEventListener("keydown", onKeyDown); } catch (_) {}
+  };
+}
+
+
 
 
 
@@ -471,6 +756,7 @@ class Jp2AirQualityCard extends HTMLElement {
 
     this._historyCache = new Map(); // key -> { ts, points }
     this._historyInflight = new Map(); // key -> promise
+    this._historyCacheMax = 30; // LRU max entries
 
     this._lastRenderKey = null; // évite les re-renders inutiles
     this._renderRaf = null; // throttling rAF
@@ -508,6 +794,12 @@ class Jp2AirQualityCard extends HTMLElement {
       background_enabled: false,
       bar_enabled: true,
       show_graph: true,
+
+       // Lovelace actions
+       tap_action: { action: "more-info" },
+       hold_action: { action: "more-info" },
+       double_tap_action: { action: "none" },
+
 
       // display (sensor)
       show_top: true,
@@ -1027,6 +1319,12 @@ class Jp2AirQualityCard extends HTMLElement {
     merged.visualizer_show_thresholds = merged.visualizer_show_thresholds !== false;
     merged.visualizer_smooth_default = !!merged.visualizer_smooth_default;
 
+
+     // Lovelace actions (tap/hold/double_tap)
+     merged.tap_action = jp2NormalizeActionConfig(merged.tap_action, { action: "more-info" });
+     merged.hold_action = jp2NormalizeActionConfig(merged.hold_action, { action: "more-info" });
+     merged.double_tap_action = jp2NormalizeActionConfig(merged.double_tap_action, { action: "none" });
+
     merged.aqi_layout = String(merged.aqi_layout || "vertical");
 
 
@@ -1109,7 +1407,9 @@ class Jp2AirQualityCard extends HTMLElement {
     if (!eid) return "sensor:none";
     const st = hass?.states?.[eid];
     if (!st) return `sensor:${eid}:missing`;
-    return `sensor:${eid}:${st.state}:${st.last_changed || ""}`;
+    const u = st.attributes && st.attributes.unit_of_measurement ? st.attributes.unit_of_measurement : "";
+    const lu = st.last_updated || st.last_changed || "";
+    return `sensor:${eid}:${st.state}:${u}:${lu}`;
   }
 
   _buildAqiKey(hass) {
@@ -1538,7 +1838,7 @@ if (p === "custom") {
         .bar-inner .seg.bad { background: var(--jp2-bad); }
 
         .knob { position:absolute; top: 50%; transform: translate(-50%, -50%); z-index: 2; width: var(--jp2-knob-size, 12px); height: var(--jp2-knob-size, 12px); border-radius:999px; background: var(--jp2-knob-color, var(--primary-color)); }
-        .knob.outline { --_o: var(--jp2-knob-outline-size, 2px); box-shadow: 0 0 0 var(--_o) rgba(255,255,255,.95), 0 0 0 calc(var(--_o) + 1px) rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.35); }
+        .knob.outline { --_o: var(--jp2-knob-outline-size, 2px); box-shadow: 0 0 0 var(--_o) var(--jp2-card-bg, rgba(255,255,255,.95)), 0 0 0 calc(var(--_o) + 1px) rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.35); }
         .knob.shadow { filter: drop-shadow(0 1px 1px rgba(0,0,0,.35)); }
 
         .graph { display:none; }
@@ -1740,10 +2040,16 @@ if (p === "custom") {
     this._aqiWrap = this.shadowRoot.getElementById("aqi");
 
     // Interactions (sensor mode)
-    try { this._header?.addEventListener("click", this._onHeaderClick, { passive: true }); } catch (_) {}
+    // Graph is an internal control (visualizer) → exclude from card actions.
+    try { this._graphWrap?.setAttribute("data-jp2-no-card-action", "1"); } catch (_) {}
     try { this._graphWrap?.addEventListener("click", this._onGraphClick); } catch (_) {}
+    this._a11yMakeButton(this._graphWrap, this._onGraphClick);
 
-    // Visualizer elements
+    // Lovelace actions (tap/hold/double_tap) on the whole card
+    try { this._cardEl = this.shadowRoot?.querySelector("ha-card") || null; } catch (_) { this._cardEl = null; }
+    this._installCardActionHandlers();
+
+// Visualizer elements
     this._vizOverlayEl = this.shadowRoot.getElementById("vizOverlay");
     this._vizTitleEl = this.shadowRoot.getElementById("vizTitle");
     this._vizSubEl = this.shadowRoot.getElementById("vizSub");
@@ -1762,6 +2068,201 @@ if (p === "custom") {
     } catch (_) {}
   }
 
+  _historyGet(key) {
+    try {
+      const v = this._historyCache.get(key);
+      if (v) {
+        // LRU: refresh insertion order
+        this._historyCache.delete(key);
+        this._historyCache.set(key, v);
+      }
+      return v;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  _historySet(key, value) {
+    try {
+      if (this._historyCache.has(key)) this._historyCache.delete(key);
+      this._historyCache.set(key, value);
+      const max = Number(this._historyCacheMax) > 0 ? Number(this._historyCacheMax) : 30;
+      while (this._historyCache.size > max) {
+        const firstKey = this._historyCache.keys().next().value;
+        this._historyCache.delete(firstKey);
+      }
+    } catch (_) {}
+  }
+
+
+  _installCardActionHandlers() {
+    if (this._jp2ActionsBound) return;
+    const card = this._cardEl || (this.shadowRoot ? this.shadowRoot.querySelector("ha-card") : null);
+    if (!card) return;
+    this._jp2ActionsBound = true;
+
+    try { card.setAttribute("data-jp2-actions", "1"); } catch (_) {}
+
+    this._jp2UnbindActions = jp2BindLovelaceActionHandler(card, {
+      onAction: (gesture, ev) => this._handleCardGesture(gesture, ev),
+      hasDouble: () => jp2ActionHasAction(this._config?.double_tap_action),
+      hasHold: () => jp2ActionHasAction(this._config?.hold_action),
+      shouldIgnore: (ev) => jp2EventPathHasNoCardAction(ev),
+    });
+  }
+
+  _handleCardGesture(gesture, ev) {
+    const c = this._config || {};
+    if (!c) return;
+
+    const map = { tap: "tap_action", hold: "hold_action", double_tap: "double_tap_action" };
+    const key = map[String(gesture || "tap")] || "tap_action";
+    const actionCfg = jp2NormalizeActionConfig(c[key], { action: "none" });
+
+    // Support confirmation
+    const conf = actionCfg?.confirmation;
+    if (conf) {
+      const msg = (typeof conf === "string") ? conf
+        : (conf && typeof conf === "object" ? (conf.text || conf.message || "Confirmer ?") : "Confirmer ?");
+      try { if (!window.confirm(msg)) return; } catch (_) {}
+    }
+
+    // Optional haptic (best-effort)
+    try { if (actionCfg?.haptic && navigator?.vibrate) navigator.vibrate(10); } catch (_) {}
+
+    this._executeLovelaceAction(actionCfg, ev);
+  }
+
+  _getDefaultActionEntityId() {
+    const c = this._config || {};
+    if (c.entity) return c.entity;
+
+    // AQI mode: if only one entity, use it as default
+    const ents = Array.isArray(c.aqi_entities) ? c.aqi_entities : [];
+    if (String(c.card_mode || "") === "aqi" && ents.length === 1) return ents[0];
+
+    return null;
+  }
+
+  _executeLovelaceAction(actionCfg, ev) {
+    const hass = this._hass;
+    const a = String(actionCfg?.action || "none");
+    if (!a || a === "none") return;
+
+    // Allow optional per-action entity override (extra compatible)
+    const entityId = actionCfg?.entity || this._getDefaultActionEntityId();
+
+    if (a === "more-info") {
+      if (!entityId) return;
+      jp2FireEvent(this, "hass-more-info", { entityId });
+      return;
+    }
+
+    if (a === "toggle") {
+      if (!hass || !entityId) return;
+      try { hass.callService("homeassistant", "toggle", { entity_id: entityId }); } catch (_) {}
+      return;
+    }
+
+    if (a === "navigate") {
+      const path = String(actionCfg?.navigation_path || "");
+      if (!path) return;
+      jp2FireEvent(this, "hass-navigate", { navigation_path: path });
+      try {
+        if (path.startsWith("http")) window.location.assign(path);
+        else {
+          history.pushState(null, "", path);
+          window.dispatchEvent(new Event("location-changed", { bubbles: true, composed: true }));
+        }
+      } catch (_) {}
+      return;
+    }
+
+    if (a === "url") {
+      const url = String(actionCfg?.url_path || "");
+      if (!url) return;
+      try { window.open(url, "_blank"); } catch (_) { try { window.location.assign(url); } catch (__) {} }
+      return;
+    }
+
+    if (a === "perform-action") {
+      if (!hass) return;
+      const svc = String(actionCfg?.perform_action || actionCfg?.service || "");
+      const [domain, service] = svc.includes(".") ? svc.split(".", 2) : [null, null];
+      if (!domain || !service) return;
+
+      const data = (actionCfg?.data && typeof actionCfg.data === "object") ? actionCfg.data
+        : ((actionCfg?.service_data && typeof actionCfg.service_data === "object") ? actionCfg.service_data : {});
+      const target = (actionCfg?.target && typeof actionCfg.target === "object") ? actionCfg.target : null;
+
+      try {
+        // HA récent: hass.callService(domain, service, data, target)
+        if (target && Object.keys(target).length) {
+          try { hass.callService(domain, service, data, target); return; } catch (_) {}
+          // Fallback: fusion target->data (anciennes signatures)
+          hass.callService(domain, service, { ...data, ...target });
+          return;
+        }
+        hass.callService(domain, service, data);
+      } catch (_) {}
+      return;
+    }
+
+
+    if (a === "call-service") {
+      if (!hass) return;
+      const svc = String(actionCfg?.service || "");
+      const [domain, service] = svc.includes(".") ? svc.split(".", 2) : [null, null];
+      if (!domain || !service) return;
+      const data = (actionCfg?.service_data && typeof actionCfg.service_data === "object") ? actionCfg.service_data : {};
+      try { hass.callService(domain, service, data); } catch (_) {}
+      return;
+    }
+
+    if (a === "fire-dom-event") {
+      jp2FireEvent(this, "ll-custom", actionCfg);
+      return;
+    }
+  }
+
+  _updateCardInteractivity() {
+    const card = this._cardEl || (this.shadowRoot ? this.shadowRoot.querySelector("ha-card") : null);
+    if (!card) return;
+    const c = this._config || {};
+    const any = jp2ActionHasAction(c.tap_action) || jp2ActionHasAction(c.hold_action) || jp2ActionHasAction(c.double_tap_action);
+
+    try {
+      if (any) {
+        card.style.cursor = "pointer";
+        card.setAttribute("role", "button");
+        card.tabIndex = 0;
+      } else {
+        card.style.cursor = "";
+        card.removeAttribute("role");
+        card.removeAttribute("tabindex");
+      }
+    } catch (_) {}
+  }
+
+
+  _a11yMakeButton(el, onActivate) {
+    try {
+      if (!el) return;
+      if (el.getAttribute("data-jp2-a11y") === "1") return;
+      el.setAttribute("data-jp2-a11y", "1");
+      el.setAttribute("role", "button");
+      if (!el.hasAttribute("tabindex")) el.tabIndex = 0;
+      el.addEventListener("keydown", (e) => {
+        const k = e?.key;
+        if (k === "Enter" || k === " ") {
+          e.preventDefault();
+          onActivate?.(e);
+        }
+      });
+    } catch (_) {}
+  }
+
+
   _setCardBackground(color, enabled) {
     const card = this.shadowRoot.querySelector("ha-card");
     if (!card) return;
@@ -1772,6 +2273,13 @@ if (p === "custom") {
       card.style.background = "";
       card.style.backgroundColor = "";
     }
+
+    // Expose the real card background color for CSS (e.g., knob outline) — theme friendly
+    try {
+      const bg = getComputedStyle(card).backgroundColor || "rgb(255,255,255)";
+      card.style.setProperty("--jp2-card-bg", jp2ResolveCssColorToRgba(bg, 0.95, card));
+    } catch (_) {}
+
   }
 
   _render() {
@@ -1832,6 +2340,10 @@ if (p === "custom") {
         card.style.setProperty("--jp2-aqi-cols", String(clamp(Number(c.aqi_tiles_per_row || 3), 1, 6)));
         card.style.setProperty("--jp2-aqi-tile-radius", `${clamp(Number(c.aqi_tile_radius ?? 16), 0, 40)}px`);
       }
+
+      // Update Lovelace action affordance
+      this._updateCardInteractivity();
+
 
       if (String(c.card_mode) === "aqi") {
         this._renderAQICard();
@@ -2406,6 +2918,7 @@ if (p === "custom") {
   async _renderInternalGraph(entityId, preset) {
     const c = this._config;
     const graph = this._graphWrap;
+    const card = (this.shadowRoot && this.shadowRoot.querySelector) ? this.shadowRoot.querySelector("ha-card") : null;
     if (!graph) return;
 
     const enabled = c.show_graph !== false;
@@ -2447,26 +2960,46 @@ if (p === "custom") {
 
     const w = 400;
     const h = 100;
-    const n = points.length;
 
-    const xy = points
+    // Use timestamps when available (faithful graph even with irregular sampling)
+    const total = points.length;
+    const nowT = Date.now();
+    const startT = nowT - hours * 3600000;
+    const spanT = Math.max(1, nowT - startT);
+
+    const extracted = points
       .map((p, i) => {
         const v = toNum(p.state);
         if (v === null) return null;
-        const x = (i / (n - 1)) * w;
-        const y = h - ((v - y0) / (y1 - y0)) * h;
-        return { x, y, v };
+        let t = jp2BestTimestamp(p);
+        if (!isNum(t)) t = startT + (total > 1 ? (i / (total - 1)) * spanT : 0);
+        return { v, t };
       })
       .filter(Boolean);
 
-    if (xy.length < 2) {
+    // Downsample to keep SVG light
+    const MAXP = 220;
+    const step = Math.max(1, Math.ceil(extracted.length / MAXP));
+    const ds = extracted.filter((_, i) => i % step === 0 || i === extracted.length - 1);
+
+    const t0 = (ds[0] && isNum(ds[0].t)) ? ds[0].t : startT;
+    const t1 = (ds[ds.length - 1] && isNum(ds[ds.length - 1].t)) ? ds[ds.length - 1].t : nowT;
+    const tSpan = Math.max(1, t1 - t0);
+
+    const xy = ds.map((p) => {
+      const x = ((p.t - t0) / tSpan) * w;
+      const y = h - ((p.v - y0) / (y1 - y0)) * h;
+      return { x, y, v: p.v, t: p.t };
+    });
+
+if (xy.length < 2) {
       graph.innerHTML = `<div class="msg">Historique indisponible</div>`;
       return;
     }
 
     const mode = String(c.graph_color_mode || "segments");
     const svgParts = [];
-    svgParts.push(`<line x1="0" y1="${h}" x2="${w}" y2="${h}" stroke="${cssColorMix("var(--divider-color)", 60)}" stroke-width="1" />`);
+    svgParts.push(`<line x1="0" y1="${h}" x2="${w}" y2="${h}" stroke="${cssColorMix("var(--divider-color)", 60, card)}" stroke-width="1" />`);
 
     const pathD = xy.map((p, idx) => `${idx === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(" ");
 
@@ -2504,7 +3037,7 @@ if (p === "custom") {
     if (!this._hass || !entityId) return null;
     const key = `${entityId}|${hours}`;
     const now = Date.now();
-    const cached = this._historyCache.get(key);
+    const cached = this._historyGet(key);
     if (cached && now - cached.ts < 60000) return cached.points;
     if (this._historyInflight.has(key)) return await this._historyInflight.get(key);
 
@@ -2515,7 +3048,7 @@ if (p === "custom") {
         const res = await this._hass.callApi("GET", url);
         const arr = Array.isArray(res) ? res[0] : null;
         const points = Array.isArray(arr) ? arr : [];
-        this._historyCache.set(key, { ts: Date.now(), points });
+        this._historySet(key, { ts: Date.now(), points });
         return points;
       } catch (e) {
         return null;
@@ -2788,6 +3321,7 @@ if (p === "custom") {
 
       body = el("div", { class: "tiles" }, rows.map((r) => {
         const tile = el("div", { class: `tile ${c.aqi_tile_color_enabled ? "colored" : ""} ${c.aqi_tile_transparent ? "transparent" : ""} ${c.aqi_tile_outline_transparent ? "outline-transparent" : ""} ${iconsOnly ? "icons-only" : ""}` });
+         try { tile.setAttribute("data-jp2-no-card-action", "1"); } catch (_) {}
         const col = r.status.color;
         tile.style.setProperty("--jp2-aqi-tile-color", col);
         const _b = cssColorMix(col, 32);
@@ -2827,8 +3361,20 @@ if (p === "custom") {
           if (val) tile.appendChild(val);
         }
 
-        tile.addEventListener("click", () => {
+        tile.addEventListener("click", (ev) => {
+          try { ev?.stopPropagation?.(); } catch (_) {}
           this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: r.eid }, bubbles: true, composed: true }));
+        });
+
+        // A11y
+        tile.setAttribute("role", "button");
+        tile.tabIndex = 0;
+        tile.addEventListener("keydown", (e) => {
+          const k = e?.key;
+          if (k === "Enter" || k === " ") {
+            e.preventDefault();
+            this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: r.eid }, bubbles: true, composed: true }));
+          }
         });
 
         return tile;
@@ -2836,6 +3382,7 @@ if (p === "custom") {
     } else {
       body = el("div", { class: "aqi-list" }, rows.map((r) => {
         const row = el("div", { class: "aqi-row" });
+         try { row.setAttribute("data-jp2-no-card-action", "1"); } catch (_) {}
         const col = r.status.color;
 
         const iconWrap = el("div", { class: "icon-wrap", style: { width: `${r.iconSize}px`, height: `${r.iconSize}px`, "--jp2-status-color": col, "--jp2-status-outline": cssColorMix(col, 35) } }, [
@@ -2869,8 +3416,20 @@ if (p === "custom") {
         }
         row.appendChild(right);
 
-        row.addEventListener("click", () => {
+        row.addEventListener("click", (ev) => {
+          try { ev?.stopPropagation?.(); } catch (_) {}
           this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: r.eid }, bubbles: true, composed: true }));
+        });
+
+        // A11y
+        row.setAttribute("role", "button");
+        row.tabIndex = 0;
+        row.addEventListener("keydown", (e) => {
+          const k = e?.key;
+          if (k === "Enter" || k === " ") {
+            e.preventDefault();
+            this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: r.eid }, bubbles: true, composed: true }));
+          }
         });
 
         return row;
@@ -2915,6 +3474,10 @@ class Jp2AirQualityCardEditor extends HTMLElement {
     for (const f of Array.from(this.shadowRoot?.querySelectorAll("ha-form") || [])) {
       try { f.hass = hass; } catch (_) {}
     }
+    // Propagation aux éditeurs d'actions
+    for (const a of Array.from(this.shadowRoot?.querySelectorAll("hui-action-editor") || [])) {
+      try { a.hass = hass; } catch (_) {}
+    }
   }
 
   setConfig(config) {
@@ -2926,6 +3489,10 @@ class Jp2AirQualityCardEditor extends HTMLElement {
         ...raw,
         bar: { ...(stub.bar || {}), ...deepClone((raw && raw.bar) || {}) },
       };
+
+      // Assure le champ type (HA l'exige pour éviter “Erreur de configuration — Aucun type fourni”)
+      merged.type = (raw && raw.type) ? raw.type : (config && config.type ? config.type : (merged.type || `custom:${CARD_TYPE}`));
+
 
       merged.card_mode = String(merged.card_mode || "sensor");
       merged.preset = String(merged.preset || "radon");
@@ -3291,6 +3858,22 @@ class Jp2AirQualityCardEditor extends HTMLElement {
           ));
         }
 
+
+        root.appendChild(this._section(
+          "Interactions",
+          "Actions Lovelace standard : clic, appui long, double-clic.",
+          this._actionsEditorBody(),
+          "sensor.interactions"
+        ));
+
+
+      root.appendChild(this._section(
+        "Interactions",
+        "Actions Lovelace standard : clic, appui long, double-clic.",
+        this._actionsEditorBody(),
+        "aqi.interactions"
+      ));
+
 return root;
       }
       if (tabId === "display") {
@@ -3476,6 +4059,73 @@ return root;
 
     form.addEventListener("value-changed", this._onFormValueChanged);
     return form;
+  }
+
+
+  _supportedUiActionsForCard() {
+    // Même UX que les autres modules HA (hui-action-editor) mais sans “Permuter” (toggle).
+    // On garde uniquement les actions que la carte sait exécuter.
+    return ["more-info", "navigate", "url", "perform-action", "none"];
+  }
+
+  _actionsEditorBody() {
+    const wrap = document.createElement("div");
+    wrap.style.display = "grid";
+    wrap.style.gap = "12px";
+
+    const mk = (label, key, defaultAction) => {
+      const ed = document.createElement("hui-action-editor");
+      try { ed.hass = this._hass; } catch (_) {}
+      try { ed.label = label; } catch (_) {}
+      try { ed.actions = this._supportedUiActionsForCard(); } catch (_) {}
+      if (defaultAction) { try { ed.defaultAction = defaultAction; } catch (_) {} }
+
+      let cfg = this._config ? this._config[key] : undefined;
+      // Si l’action correspond strictement au défaut et n’a pas d’options, on affiche “default”.
+      try {
+        if (cfg && typeof cfg === "object" && !Array.isArray(cfg) && defaultAction) {
+          const a = String(cfg.action || "");
+          const keys = Object.keys(cfg);
+          if (a === defaultAction && keys.length === 1) cfg = undefined;
+        }
+      } catch (_) {}
+      try { ed.config = cfg; } catch (_) {}
+
+      ed.addEventListener("value-changed", (ev) => this._onCardActionChanged(key, ed, ev));
+      return ed;
+    };
+
+    wrap.appendChild(mk("Tap action (clic/tap)", "tap_action", "more-info"));
+    wrap.appendChild(mk("Hold action (appui long)", "hold_action", "more-info"));
+    wrap.appendChild(mk("Double-tap action", "double_tap_action", "none"));
+
+    return wrap;
+  }
+
+  _onCardActionChanged(key, editorEl, ev) {
+    try { ev?.stopPropagation?.(); } catch (_) {}
+
+    const value = ev?.detail?.value;
+
+    const next = deepClone(this._config || {});
+    if (!next.type) next.type = (this._config && this._config.type) ? this._config.type : `custom:${CARD_TYPE}`;
+
+    if (value === undefined) {
+      delete next[key];
+    } else if (typeof value === "string") {
+      next[key] = { action: value };
+    } else if (value && typeof value === "object" && !Array.isArray(value)) {
+      next[key] = value;
+    } else {
+      delete next[key];
+    }
+
+    this._config = next;
+
+    // IMPORTANT: met à jour l’éditeur immédiatement pour afficher les champs sans “enregistrer”
+    try { editorEl.config = next[key]; } catch (_) {}
+
+    this._fireConfigChanged(this._config);
   }
 
     _computeLabel(s) {
@@ -4390,6 +5040,9 @@ const body = document.createElement("div");
 
   _fireConfigChanged(cfg) {
     const cleaned = deepClone(cfg);
+
+    // Fix: HA exige un champ type dans la config d’une carte
+    if (!cleaned.type) cleaned.type = (this._config && this._config.type) ? this._config.type : `custom:${CARD_TYPE}`;
 
     // Fix: supprime les clés racines du type "bar.width" si présentes
     jp2NormalizeDottedRootKeys(cleaned, ["bar"]);
