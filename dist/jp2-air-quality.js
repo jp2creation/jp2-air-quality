@@ -2,7 +2,7 @@
   JP2 Air Quality Card
   File name must remain: jp2-air-quality.js
 
-  Release notes — v2.1.5 (version actuelle)
+  Release notes — v2.1.5d (version actuelle)
   - UI: Graphe (mini + visualiseur) rendu plus proche du graphe natif Home Assistant (courbe plus fluide, aire remplie, grille subtile) en conservant les options existantes.
   - UI: Mode AQI — plus de texte "(capteurs masqués)" quand l’affichage des capteurs est désactivé.
 
@@ -38,7 +38,7 @@
 const CARD_TYPE = "jp2-air-quality";
 const CARD_NAME = "JP2 Air Quality";
 const CARD_DESC = "Air quality card (sensor + AQI multi-sensors) with internal history graph, full-screen visualizer, and a fluid visual editor (v2).";
-const CARD_VERSION = "2.1.5";
+const CARD_VERSION = "2.1.5d";
 
 
 const CARD_BUILD_DATE = "2026-02-18";
