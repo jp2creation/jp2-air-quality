@@ -25,7 +25,7 @@
 # JP2 Air Quality Card 
 
 A **Home Assistant Lovelace** card with a clean **dashboard look** to display **air quality & comfort** at a glance  
-(CO₂, VOC, radon, pressure, temperature, humidity… from airthings, netatmo, Xiaomi and others devices ) with a **colored gauge**, a **status label**, an optional **AQI summary**, and an integrated **history graph**.
+(CO₂, VOC, radon, CO, CH₂O, pressure, temperature, humidity… from airthings, netatmo, Xiaomi and others devices ) with a **colored gauge**, a **status label**, an optional **AQI summary**, and an integrated **history graph**.
 
 > [!NOTE]
 > This module supports values from any Home Assistant–compatible sensor, so you can display and interpret indoor air quality from all your entities in one unified card.<br><br>
