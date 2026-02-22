@@ -110,6 +110,8 @@ entities:
 
 <br>
 
+<img src="https://github.com/jp2creation/JP2-Air-Quality-Card/blob/cac674f3c13a8aca051f7daae961f0056adcc065/docs/images/co2.png" alt="CO2 card preview" width="150px">
+
 ```yaml
 type: custom:jp2-air-quality
 title: Living room
