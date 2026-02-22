@@ -7,7 +7,7 @@
 
 ![GitHub release (latest by date)](https://img.shields.io/github/v/release/jp2creation/JP2-Air-Quality-Card?style=flat-square)
 [![Latest Version][version_shield]][releases]
-<img src="docs/images/home-assistant-icon-flat.png" alt="ha" height="20px">
+<img src="https://github.com/jp2creation/JP2-Air-Quality-Card/blob/7402cc9acc9d5569334a7b9a39a8eabf0f930ebd/docs/images/home-assistant-icon-flat.png" alt="ha" height="20px">
 [![HACS Custom][hacs_shield]][hacs] 
 [![Buy me a coffee][buy_me_a_coffee_shield]][buy_me_a_coffee]
 
