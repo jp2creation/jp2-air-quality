@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/jp2creation/JP2-Air-Quality-Card/blob/main/README.md
+    about: Please review the README before opening a new issue.
